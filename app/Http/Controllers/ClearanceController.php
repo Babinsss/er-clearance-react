@@ -14,27 +14,31 @@ class ClearanceController extends Controller
     {
         $db = \Illuminate\Support\Facades\DB::connection('ihomis');
 
-        // 1. Resolve Patient ID
+        // 1. Resolve Patient ID & Current Encounter Details
+        $currentEncounter = $db->table('henctr')->where('enccode', $enccode)->first();
+        
         $transaction = \App\Models\ClearanceTransaction::where('enccode', $enccode)->first();
-        $hpercode = $transaction ? $transaction->hospital_number : null;
-
-        if (!$hpercode) {
-            $hpercode = $db->table('henctr')->where('enccode', $enccode)->value('hpercode');
-        }
+        $hpercode = $transaction ? $transaction->hospital_number : ($currentEncounter->hpercode ?? null);
 
         if (!$hpercode && preg_match('/(000000\d{9})/', str_replace('/', '', $enccode), $matches)) {
             $hpercode = $matches[1];
         }
 
-        // 2. Fetch All Encounters
-        $encounterCodes = [];
-        if ($hpercode) {
-            $encounterCodes = $db->table('henctr')
+        // 2. Fetch Active Encounters (BULLETPROOFED ER CATCHER)
+        $encounterCodes = [$enccode]; // Guarantee the current encounter is ALWAYS included
+
+        if ($hpercode && $currentEncounter && isset($currentEncounter->encdate)) {
+            $currentDate = $currentEncounter->encdate;
+
+            // Go back 3 days to catch the ER visit, starting from midnight to be safe
+            $historyEncounters = $db->table('henctr')
                 ->where('hpercode', $hpercode)
+                ->where('encdate', '>=', date('Y-m-d 00:00:00', strtotime($currentDate . ' -3 days')))
                 ->pluck('enccode')
                 ->toArray();
-        } else {
-            $encounterCodes = [$enccode];
+                
+            // Merge them together and remove duplicates!
+            $encounterCodes = array_unique(array_merge($encounterCodes, $historyEncounters));
         }
 
         // 3. SOURCE A: Doctor's Orders
@@ -176,13 +180,15 @@ class ClearanceController extends Controller
 
         $csrRegex = '/(SYRINGE|MACROSET|MICROSET|CANNULA|VENFLON|GAUZE|GLOVE|TUBE|PACK|NEEDLE|CATH|PLASTER|COTTON|TAPE|CHERRY|BALL|BANDAGE|DRAPE|LANCET|BLADE|SUTURE|DIAPER|UNDERPAD|MASK|GOWN|WATER|STERILE|POVIDONE|ALCOHOL|DRESSING|NSS|SALINE|D5|LR|RINGER|SET|KIT|SWAB|GEL|PUMP|CAP|LINEN|EUROMED)/';
 
-        // 6A. Sort Doctor's Orders
+        // 6A. Sort Doctor's Orders 
         foreach ($docOrders as $item) {
             $computedStatus = trim(strtoupper($item->status ?? 'U'));
             $ordcon = trim(strtoupper($item->ordcon ?? ''));
             $orderupd = trim(strtoupper($item->orderupd ?? ''));
             
-            if ($computedStatus === 'C' || $computedStatus === 'D' || $computedStatus === 'U' || str_contains($ordcon, 'CAN') || str_contains($orderupd, 'CAN') || $orderupd === 'INACT' || str_contains(strtoupper($item->item_description), 'CANCEL')) {
+            // CRITICAL FIX: Removed $computedStatus === 'U' from this skip list!
+            // Fresh, unserved ER orders will now successfully flow through!
+            if ($computedStatus === 'C' || $computedStatus === 'D' || str_contains($ordcon, 'CAN') || str_contains($orderupd, 'CAN') || $orderupd === 'INACT' || str_contains(strtoupper($item->item_description), 'CANCEL')) {
                 continue;
             }
 
@@ -199,25 +205,22 @@ class ClearanceController extends Controller
 
             $baseName = trim(preg_replace('/\s*\([^)]*\)$/', '', $desc));
             $forcePharma = str_contains($desc, 'PHILRX') || str_contains($desc, 'SODIUM CHLORIDE');
-
-            // Radiology keywords to catch scans, ultrasounds, and x-rays
+            
+            // Look for Cardio and Radio first
             $isRadio = str_starts_with($code, 'RAD') || preg_match('/(X-?RAY|UTZ|ULTRASOUND|CT|MRI|SCAN|SONOGRAM|RADIOGRAPH|MAMMO|ABDOMEN, WHOLE)/', $desc);
+            $isCardio = str_starts_with($code, 'CAR') || $code === 'ECG' || str_contains($desc, 'ECG');
 
-            if (str_starts_with($code, 'LAB') && $code !== 'ECG') {
-                $labOrders[] = $cleanItem;
-            } elseif ($isRadio) {
-                // 👇 FIX: Send Abdomen scans and other imaging straight to Radiology!
-                $radioOrders[] = $cleanItem;
-            } elseif (str_starts_with($code, 'CAR') || $code === 'ECG') {
-                $cardioOrders[] = $cleanItem;
-            } elseif ($forcePharma) {
+            if ($forcePharma) {
                 $pharmacyOrders[] = $cleanItem;
+            } elseif ($isCardio) { 
+                $cardioOrders[] = $cleanItem;
+            } elseif ($isRadio) {
+                $radioOrders[] = $cleanItem;
+            } elseif (str_starts_with($code, 'LAB')) {
+                $labOrders[] = $cleanItem;
             } elseif ($isPharma === 'N' || str_starts_with($majorCategory, '018') || preg_match($csrRegex, $baseName) || str_contains($desc, 'CSR')) {
                 $csrOrders[] = $cleanItem;
-            } else {
-                // Removed the blind dump into CSR. Unrecognized items are safely ignored 
-                // instead of polluting the supply rooms.
-            }
+            } 
         }
 
         // 6B. Sort Pharmacy Orders
@@ -293,17 +296,19 @@ class ClearanceController extends Controller
             $isBarcode = preg_match('/^\d{13}$/', $baseName); 
             
             $forcePharma = str_contains($desc, 'PHILRX') || str_contains($desc, 'SODIUM CHLORIDE');
+            $isRadio = preg_match('/\bRAD|X-?RAY/', $upperCategory) || preg_match('/(X-?RAY|UTZ|ULTRASOUND|CT|MRI|SCAN|SONOGRAM|RADIOGRAPH|MAMMO|ABDOMEN, WHOLE)/', $desc);
+            $isCardio = preg_match('/\bCARD|\bECG\b/', $upperCategory) || str_contains($desc, 'ECG');
 
             if ($forcePharma) {
                 $pharmacyOrders[] = $cleanItem;
+            } elseif ($isCardio) { 
+                $cardioOrders[] = $cleanItem;
+            } elseif ($isRadio) {
+                $radioOrders[] = $cleanItem;
             } elseif ($isBarcode || $isPharma === 'N' || str_starts_with($majorCategory, '018') || preg_match($csrRegex, strtoupper($baseName)) || preg_match('/\bCSR\b/', $upperCategory) || preg_match('/\bSUPPLIES CSR\b/', $upperCategory)) {
                 $csrOrders[] = $cleanItem;
             } elseif (preg_match('/\bLAB(ORATORY|S)?\b/', $upperCategory)) { 
                 $labOrders[] = $cleanItem; 
-            } elseif (preg_match('/\bRAD|X-?RAY/', $upperCategory)) { 
-                $radioOrders[] = $cleanItem; 
-            } elseif (preg_match('/\bCARD|\bECG\b/', $upperCategory)) { 
-                $cardioOrders[] = $cleanItem; 
             } elseif (preg_match('/PHARM|DRUG|MEDICINE/', $upperCategory)) { 
                 $pharmacyOrders[] = $cleanItem; 
             } else {

@@ -19,9 +19,14 @@ class RegisteredUserController extends Controller
     /**
      * Display the registration view.
      */
-    public function create(): Response
+    public function create(): \Inertia\Response
     {
-        return Inertia::render('Auth/Register');
+        // Fetch all dynamic departments from the database
+        $departments = \App\Models\Department::orderBy('category')->orderBy('name')->get();
+
+        return Inertia::render('Auth/Register', [
+            'departments' => $departments
+        ]);
     }
 
     /**

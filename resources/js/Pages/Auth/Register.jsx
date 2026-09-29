@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { Head, Link, useForm } from '@inertiajs/react';
 import InputError from '@/Components/InputError';
 
-export default function Register() {
+export default function Register({ departments = [] }) {
     const { data, setData, post, processing, errors, reset } = useForm({
         name: '',
         email: '',
@@ -31,7 +31,6 @@ export default function Register() {
                 <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-slate-800 to-teal-900 opacity-80"></div>
                 
                 <div className="relative z-10 flex flex-col items-center max-w-md w-full">
-                    {/* Provincial & Hospital Logos with Fallbacks */}
                     <div className="flex space-x-4 mb-6">
                         <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center shadow-lg border-2 border-slate-700 relative overflow-hidden">
                             <img 
@@ -62,7 +61,6 @@ export default function Register() {
                         Secure access provisioning for the Clearance Portal.
                     </p>
 
-                    {/* System Status Box */}
                     <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6 w-full backdrop-blur-sm">
                         <div className="flex items-center text-teal-400 font-bold mb-4 text-sm tracking-wide">
                             <span className="relative flex h-3 w-3 mr-2">
@@ -150,12 +148,24 @@ export default function Register() {
                             >
                                 <option value="">Select a role or department...</option>
                                 <option value="Billing & Claims">Billing & Claims</option>
-                                <option value="Laboratory">Laboratory</option>
-                                <option value="Radiology">Radiology</option>
-                                <option value="Pharmacy">Pharmacy</option>
-                                <option value="Cardiopulmonary">Cardiopulmonary</option>
-                                <option value="CSR">CSR</option>
-                                <option value="Ortho Ward">Ortho Ward</option>
+                                
+                                {/* Dynamic Departments from Database */}
+                                {departments.length > 0 ? (
+                                    departments.map((dept) => (
+                                        <option key={dept.id} value={dept.name}>
+                                            {dept.name}
+                                        </option>
+                                    ))
+                                ) : (
+                                    // Fallback if the database is currently empty
+                                    <>
+                                        <option value="Laboratory">Laboratory</option>
+                                        <option value="Radiology">Radiology</option>
+                                        <option value="Pharmacy">Pharmacy</option>
+                                        <option value="Cardiopulmonary">Cardiopulmonary</option>
+                                        <option value="CSR">CSR</option>
+                                    </>
+                                )}
                             </select>
                             <InputError message={errors.department} className="mt-2" />
                         </div>

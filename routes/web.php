@@ -2,15 +2,22 @@
 
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ClearanceController;
+use App\Http\Controllers\AdminController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Auth; // <-- ADDED AUTH FACADE
 use Inertia\Inertia;
 
 Route::middleware(['auth', 'verified'])->group(function () {
     
-    Route::get('/', function (Request $request) {
-        $user = auth()->user();
+    Route::get('/', function () { // <-- Removed Request injection here
+        $user = Auth::user(); // <-- BULLETPROOF USER CHECK
+        
+        // --- 0. ICT / ADMIN LOGIC ---
+        if ($user->department === 'ICT / Admin') {
+            return redirect()->route('admin.index');
+        }
         
         // --- 1. BILLING & CLAIMS LOGIC ---
         if ($user->department === 'Billing & Claims') {
@@ -23,11 +30,10 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ]);
         }
 
-        // --- 2. LIVE COST CENTER QUEUE LOGIC (UPDATED WITH HISTORY) ---
+        // --- 2. LIVE COST CENTER QUEUE LOGIC ---
         $costCenters = ['Laboratory', 'Radiology', 'Pharmacy', 'Cardiopulmonary', 'CSR'];
 
         if (in_array($user->department, $costCenters)) {
-            // Get all clearance logs made by THIS specific department
             $myClearedLogs = \App\Models\ClearanceLog::where('department', $user->department)
                 ->orderBy('created_at', 'desc')
                 ->get()
@@ -35,7 +41,6 @@ Route::middleware(['auth', 'verified'])->group(function () {
             
             $clearedEnccodes = $myClearedLogs->keys()->toArray();
 
-            // PENDING: Patients in progress that THIS department has NOT cleared yet
             $activeTransactions = \App\Models\ClearanceTransaction::where('overall_status', '!=', 'Cleared')
                 ->whereNotIn('enccode', $clearedEnccodes)
                 ->orderBy('created_at', 'desc')
@@ -46,11 +51,10 @@ Route::middleware(['auth', 'verified'])->group(function () {
                     'enccode' => $txn->enccode,
                     'name' => $txn->patient_name,
                     'status' => $txn->overall_status,
-                    'date' => $txn->created_at->toIso8601String() // Safer for JS parsing
+                    'date' => $txn->created_at->toIso8601String() 
                 ];
             });
 
-            // HISTORY: Patients that THIS department HAS cleared
             $completedTransactions = \App\Models\ClearanceTransaction::whereIn('enccode', $clearedEnccodes)
                 ->orderBy('updated_at', 'desc')
                 ->get();
@@ -67,12 +71,12 @@ Route::middleware(['auth', 'verified'])->group(function () {
             return Inertia::render('Dashboard/CostCenter', [
                 'department' => $user->department,
                 'pendingPatients' => $pendingPatients,
-                'historyPatients' => $historyPatients // Pass history to React
+                'historyPatients' => $historyPatients 
             ]);
         }
 
         // --- 3. LIVE WARD DASHBOARD LOGIC ---
-        $search = $request->input('search');
+        $search = request('search'); // <-- Safer helper for closures
         $patient = null;
         $clearances = [];
 
@@ -126,10 +130,21 @@ Route::middleware(['auth', 'verified'])->group(function () {
         
     })->name('dashboard');
 
+   // --- ADMIN ROUTES ---
+    Route::get('/admin', [AdminController::class, 'index'])->name('admin.index');
+    Route::put('/admin/users/{id}', [AdminController::class, 'updateUser'])->name('admin.users.update');
+    Route::delete('/admin/users/{id}', [AdminController::class, 'deleteUser'])->name('admin.users.destroy');
+    
+    Route::post('/admin/departments', [AdminController::class, 'storeDepartment'])->name('admin.departments.store');
+    Route::put('/admin/departments/{id}', [AdminController::class, 'updateDepartment'])->name('admin.departments.update');
+    Route::delete('/admin/departments/{id}', [AdminController::class, 'deleteDepartment'])->name('admin.departments.destroy');
+
+    // --- CLEARANCE ROUTES ---
     Route::post('/transactions', [ClearanceController::class, 'storeTransaction'])->name('transactions.store');
     Route::get('/clearance/{enccode}', [ClearanceController::class, 'show'])->name('clearance.show')->where('enccode', '.*');
     Route::post('/clearance', [ClearanceController::class, 'store'])->name('clearance.store');
     
+    // --- PRINT ROUTE ---
     Route::get('/print-clearance/{enccode}', function ($enccode) {
         $transaction = \App\Models\ClearanceTransaction::where('enccode', $enccode)->firstOrFail();
         
