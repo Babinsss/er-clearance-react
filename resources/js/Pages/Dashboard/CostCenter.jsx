@@ -8,11 +8,12 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
     const [activeModule, setActiveModule] = useState('pending'); 
     const [soundEnabled, setSoundEnabled] = useState(true);
     
-    // --- MODAL STATE VARIABLES ---
+    // --- MODAL & NOTIFICATION STATE VARIABLES ---
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isLoadingData, setIsLoadingData] = useState(false);
     const [modalData, setModalData] = useState(null);
     const [activeEnccode, setActiveEnccode] = useState(null);
+    const [toastMessage, setToastMessage] = useState(null); // UI-friendly notification state
 
     const previousQueueCount = useRef(pendingPatients.length);
     const warnedPatients = useRef([]); 
@@ -74,7 +75,8 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
             setModalData(response.data);
         } catch (error) {
             console.error("Failed to load clearance data", error);
-            alert("Failed to load records from iHomis. Please try again.");
+            setToastMessage("Failed to load records from iHomis. Please try again.");
+            setTimeout(() => setToastMessage(null), 3000);
             setIsModalOpen(false);
         } finally {
             setIsLoadingData(false);
@@ -85,7 +87,6 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
     const getActiveOrders = () => {
         if (!modalData) return [];
         
-        // Failsafe: Look for the data wherever Inertia or Laravel might have hidden it
         let data = modalData;
         if (modalData.props) data = modalData.props;
         if (data.data) data = data.data;
@@ -93,20 +94,42 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
         const dept = (department || '').toLowerCase();
         let orders = [];
 
-        // Route to the correct array based on the current department
         if (dept.includes('pharmacy')) orders = data.pharmacyOrders;
         else if (dept.includes('csr') || dept.includes('supplies')) orders = data.csrOrders;
         else if (dept.includes('lab')) orders = data.labOrders;
         else if (dept.includes('radio') || dept.includes('xray')) orders = data.radioOrders;
         else if (dept.includes('cardio') || dept.includes('ecg')) orders = data.cardioOrders;
         
-        // Ensure we strictly return an array to prevent .length or .map() crashes
         return Array.isArray(orders) ? orders : [];
     };
 
     const hasUnservedItems = () => {
         const orders = getActiveOrders();
         return orders.some(item => item.status !== 'S');
+    };
+
+    // --- UI-FRIENDLY CLEAR FUNCTION ---
+    const handleClearDepartment = () => {
+        router.post('/clearance', {
+            enccode: activeEnccode,
+            department: department
+        }, {
+            preserveScroll: true,
+            onSuccess: () => {
+                setToastMessage(`${department} successfully cleared!`);
+                setIsModalOpen(false);
+                
+                // Hide toast automatically after 3 seconds
+                setTimeout(() => {
+                    setToastMessage(null);
+                }, 3000);
+            },
+            onError: (errors) => {
+                setToastMessage('Failed to clear department. Check console.');
+                setTimeout(() => setToastMessage(null), 3000);
+                console.error(errors);
+            }
+        });
     };
 
     return (
@@ -250,7 +273,6 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                 <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 sm:p-6 transition-opacity">
                     <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200" style={{ maxHeight: '90vh' }}>
                         
-                        {/* Header */}
                         <div className="px-6 py-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
                             <div>
                                 <h3 className="text-xl font-bold text-slate-800">{department} Review Items</h3>
@@ -261,7 +283,6 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                             </button>
                         </div>
 
-                        {/* Body */}
                         <div className="p-6 overflow-y-auto bg-slate-50 flex-1">
                             {isLoadingData ? (
                                 <div className="flex flex-col items-center justify-center py-20">
@@ -282,6 +303,7 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                                         </div>
                                         
                                         <button 
+                                            onClick={handleClearDepartment}
                                             disabled={hasUnservedItems()}
                                             className={`px-4 py-2 text-sm font-bold rounded-lg shadow-sm transition-all focus:outline-none flex items-center space-x-2 
                                                 ${hasUnservedItems() 
@@ -330,6 +352,19 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                             ) : null}
                         </div>
                     </div>
+                </div>
+            )}
+
+            {/* --- SLIDING TOAST NOTIFICATION --- */}
+            {toastMessage && (
+                <div className="fixed top-6 right-6 z-[200] flex items-center bg-teal-600 text-white px-5 py-3.5 rounded-xl shadow-2xl animate-in slide-in-from-top-5 fade-in duration-300">
+                    <div className="bg-teal-500 rounded-full p-1 mr-3">
+                        <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
+                    </div>
+                    <span className="font-bold text-sm tracking-wide">{toastMessage}</span>
+                    <button onClick={() => setToastMessage(null)} className="ml-4 text-teal-200 hover:text-white transition-colors">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
                 </div>
             )}
         </PortalLayout>

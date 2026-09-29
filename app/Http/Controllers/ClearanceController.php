@@ -37,7 +37,7 @@ class ClearanceController extends Controller
             $encounterCodes = [$enccode];
         }
 
-        // 3. SOURCE A: Doctor's Orders (Safely joining hclass2 for CSR supplies)
+        // 3. SOURCE A: Doctor's Orders
         $docOrders = $db->table('hdocord as d')
             ->leftJoin('hprocm as p', function($join) {
                 $join->whereRaw('TRIM(d.proccode) = TRIM(p.proccode)');
@@ -48,35 +48,66 @@ class ClearanceController extends Controller
             ->leftJoin('hdmhdr as m', function($join) {
                 $join->whereRaw('TRIM(d.orcode) = TRIM(m.dmdcomb)');
             })
+            ->leftJoin('hdruggrp as dg', function($join) {
+                $join->whereRaw('TRIM(m.grpcode) = TRIM(dg.grpcode)');
+            })
+            ->leftJoin('hgen as gen', function($join) {
+                $join->whereRaw('TRIM(dg.gencode) = TRIM(gen.gencode)');
+            })
             ->leftJoin('hclass2 as cl2', function($join) {
-                $join->whereRaw('TRIM(d.orcode) = TRIM(cl2.cl2comb)');
+                $join->whereRaw("TRIM(d.orcode) = REPLACE(cl2.cl2comb, ' ', '')");
             })
             ->whereIn('d.enccode', $encounterCodes)
             ->select([
                 'd.dodate as datelog',
                 'd.orcode as order_code',
                 'd.doctype as doc_type',
-                \Illuminate\Support\Facades\DB::raw("COALESCE(m.brandname, cl2.cl2desc, p.procdesc, c.chrgdesc, TRIM(d.orcode), TRIM(d.pcchrgcod), 'Unknown') as item_description"),
+                \Illuminate\Support\Facades\DB::raw("TRIM(cl2.cl1comb) as major_category"),
+                \Illuminate\Support\Facades\DB::raw("cl2.pharmaceutical as is_pharma"),
+                \Illuminate\Support\Facades\DB::raw("COALESCE(
+                    NULLIF(TRIM(m.brandname), ''), 
+                    NULLIF(TRIM(gen.gendesc), ''), 
+                    NULLIF(TRIM(cl2.cl2desc), ''), 
+                    NULLIF(TRIM(p.procdesc), ''), 
+                    NULLIF(TRIM(c.chrgdesc), ''), 
+                    TRIM(d.orcode), 
+                    TRIM(d.pcchrgcod), 
+                    'Unknown'
+                ) as item_description"),
                 'd.estatus as status',
                 'd.ordcon',
                 'd.orderupd'
             ])
             ->get()->toArray();
 
-        // 4. SOURCE B: Pharmacy Orders (Includes hclass2 for CSR/Medical Supplies)
+        // 4. SOURCE B: Pharmacy Orders
         $rxOrders = $db->table('hrxo as r')
             ->leftJoin('hdmhdr as m', function($join) {
                 $join->whereRaw('TRIM(r.dmdcomb) = TRIM(m.dmdcomb)');
             })
+            ->leftJoin('hdruggrp as dg', function($join) {
+                $join->whereRaw('TRIM(m.grpcode) = TRIM(dg.grpcode)');
+            })
+            ->leftJoin('hgen as gen', function($join) {
+                $join->whereRaw('TRIM(dg.gencode) = TRIM(gen.gencode)');
+            })
             ->leftJoin('hclass2 as cl2', function($join) {
-                $join->whereRaw('TRIM(r.dmdcomb) = TRIM(cl2.cl2comb)');
+                $join->whereRaw("TRIM(r.dmdcomb) = REPLACE(cl2.cl2comb, ' ', '')");
             })
             ->whereIn('r.enccode', $encounterCodes)
             ->select([
                 'r.dodate as datelog',
                 'r.dmdcomb as order_code',
-                \Illuminate\Support\Facades\DB::raw("COALESCE(m.brandname, cl2.cl2desc, TRIM(r.dmdcomb)) as item_description"),
+                \Illuminate\Support\Facades\DB::raw("TRIM(cl2.cl1comb) as major_category"),
+                \Illuminate\Support\Facades\DB::raw("cl2.pharmaceutical as is_pharma"),
+                \Illuminate\Support\Facades\DB::raw("COALESCE(
+                    NULLIF(TRIM(m.brandname), ''), 
+                    NULLIF(TRIM(gen.gendesc), ''), 
+                    NULLIF(TRIM(cl2.cl2desc), ''), 
+                    TRIM(r.dmdcomb)
+                ) as item_description"),
                 'r.estatus as status',
+                'r.rxostatus', 
                 'r.qtybal as balance',
                 'r.qtyissued',
                 'r.ordcon',
@@ -90,15 +121,21 @@ class ClearanceController extends Controller
                 $join->whereRaw('TRIM(pc.chargcode) = TRIM(c.chrgcode)');
             })
             ->leftJoin('hdmhdr as m', function($join) {
-                $join->whereRaw('TRIM(pc.itemcode) = TRIM(m.dmdcomb)');
+                $join->whereRaw('TRIM(pc.itemcode) = TRIM(m.dmdcomb)')
+                     ->orWhereRaw('TRIM(pc.itemcode) = CONCAT(TRIM(m.dmdcomb), m.dmdctr)');
+            })
+            ->leftJoin('hdruggrp as dg', function($join) {
+                $join->whereRaw('TRIM(m.grpcode) = TRIM(dg.grpcode)');
+            })
+            ->leftJoin('hgen as gen', function($join) {
+                $join->whereRaw('TRIM(dg.gencode) = TRIM(gen.gencode)');
             })
             ->leftJoin('hprocm as p', function($join) {
                 $join->whereRaw('TRIM(pc.itemcode) = TRIM(p.proccode)');
             })
             ->leftJoin('hclass2 as cl2', function($join) {
-                $join->whereRaw('TRIM(pc.itemcode) = TRIM(cl2.cl2comb)');
+                $join->whereRaw("TRIM(pc.itemcode) = REPLACE(cl2.cl2comb, ' ', '')");
             })
-            // 👇 THE HPROC BRIDGE FOR LABORATORY/PROCEDURE CODES 👇
             ->leftJoin('hproc as pr', function($join) {
                 $join->whereRaw('TRIM(pc.itemcode) = TRIM(pr.prikey)');
             })
@@ -106,13 +143,19 @@ class ClearanceController extends Controller
                 $join->whereRaw('TRIM(pr.proccode) = TRIM(p_trans.proccode)');
             })
             ->whereIn('pc.enccode', $encounterCodes)
+            ->whereNull('pc.deleted_at')
+            ->where(function($query) {
+                $query->whereNotIn('pc.pcstat', ['V', 'C', 'D'])->orWhereNull('pc.pcstat');
+            })
             ->select([
                 'pc.pcchrgdte as datelog',
                 'c.chrgdesc as category',
                 \Illuminate\Support\Facades\DB::raw("TRIM(pc.itemcode) as itemcode"),
-                // Checks master tables first, then falls back to the bridged hproc description
+                \Illuminate\Support\Facades\DB::raw("TRIM(cl2.cl1comb) as major_category"), 
+                \Illuminate\Support\Facades\DB::raw("cl2.pharmaceutical as is_pharma"),
                 \Illuminate\Support\Facades\DB::raw("COALESCE(
                     NULLIF(TRIM(m.brandname), ''), 
+                    NULLIF(TRIM(gen.gendesc), ''),
                     NULLIF(TRIM(cl2.cl2desc), ''), 
                     NULLIF(TRIM(p.procdesc), ''), 
                     NULLIF(TRIM(p_trans.procdesc), ''), 
@@ -131,46 +174,73 @@ class ClearanceController extends Controller
         $csrOrders = [];
         $pharmacyOrders = [];
 
-        // 6A. Sort Doctor's Orders (No more dumping random instructions into CSR)
+        $csrRegex = '/(SYRINGE|MACROSET|MICROSET|CANNULA|VENFLON|GAUZE|GLOVE|TUBE|PACK|NEEDLE|CATH|PLASTER|COTTON|TAPE|CHERRY|BALL|BANDAGE|DRAPE|LANCET|BLADE|SUTURE|DIAPER|UNDERPAD|MASK|GOWN|WATER|STERILE|POVIDONE|ALCOHOL|DRESSING|NSS|SALINE|D5|LR|RINGER|SET|KIT|SWAB|GEL|PUMP|CAP|LINEN|EUROMED)/';
+
+        // 6A. Sort Doctor's Orders
         foreach ($docOrders as $item) {
             $computedStatus = trim(strtoupper($item->status ?? 'U'));
             $ordcon = trim(strtoupper($item->ordcon ?? ''));
             $orderupd = trim(strtoupper($item->orderupd ?? ''));
             
-            if ($computedStatus === 'C' || $ordcon === 'CANOR' || $orderupd === 'INACT') {
+            if ($computedStatus === 'C' || $computedStatus === 'D' || $computedStatus === 'U' || str_contains($ordcon, 'CAN') || str_contains($orderupd, 'CAN') || $orderupd === 'INACT' || str_contains(strtoupper($item->item_description), 'CANCEL')) {
                 continue;
             }
 
             $code = strtoupper($item->order_code ?? '');
+            $desc = strtoupper($item->item_description ?? '');
+            $majorCategory = trim($item->major_category ?? '');
+            $isPharma = strtoupper(trim($item->is_pharma ?? ''));
+            
             $cleanItem = [
                 'datelog' => $item->datelog, 
-                'item_description' => $item->item_description, 
+                'item_description' => $desc, 
                 'status' => $computedStatus
             ];
 
+            $baseName = trim(preg_replace('/\s*\([^)]*\)$/', '', $desc));
+            $forcePharma = str_contains($desc, 'PHILRX') || str_contains($desc, 'SODIUM CHLORIDE');
+
+            // Radiology keywords to catch scans, ultrasounds, and x-rays
+            $isRadio = str_starts_with($code, 'RAD') || preg_match('/(X-?RAY|UTZ|ULTRASOUND|CT|MRI|SCAN|SONOGRAM|RADIOGRAPH|MAMMO|ABDOMEN, WHOLE)/', $desc);
+
             if (str_starts_with($code, 'LAB') && $code !== 'ECG') {
                 $labOrders[] = $cleanItem;
-            } elseif (str_starts_with($code, 'RAD')) {
+            } elseif ($isRadio) {
+                // 👇 FIX: Send Abdomen scans and other imaging straight to Radiology!
                 $radioOrders[] = $cleanItem;
             } elseif (str_starts_with($code, 'CAR') || $code === 'ECG') {
                 $cardioOrders[] = $cleanItem;
+            } elseif ($forcePharma) {
+                $pharmacyOrders[] = $cleanItem;
+            } elseif ($isPharma === 'N' || str_starts_with($majorCategory, '018') || preg_match($csrRegex, $baseName) || str_contains($desc, 'CSR')) {
+                $csrOrders[] = $cleanItem;
+            } else {
+                // Removed the blind dump into CSR. Unrecognized items are safely ignored 
+                // instead of polluting the supply rooms.
             }
-            // We removed the "else" block here! Generic doctor notes no longer clog up the clearance tabs.
         }
 
-        // 6B. Sort Pharmacy Orders (Separates true medications from medical supplies)
+        // 6B. Sort Pharmacy Orders
         foreach ($rxOrders as $item) {
             $computedStatus = trim(strtoupper($item->status ?? 'U'));
+            $rxostatus = trim(strtoupper($item->rxostatus ?? '')); 
             $ordcon = trim(strtoupper($item->ordcon ?? ''));
             $orderupd = trim(strtoupper($item->orderupd ?? ''));
+            $desc = strtoupper($item->item_description ?? '');
+            $code = strtoupper(trim($item->order_code ?? ''));
             
-            if ($computedStatus === 'C' || $ordcon === 'CANOR' || $orderupd === 'INACT') {
+            if (str_starts_with($code, 'CBROS') || str_contains($desc, 'CBROS')) {
+                continue;
+            }
+
+            if ($computedStatus === 'C' || $rxostatus === 'C' || $rxostatus === 'I' || $computedStatus === 'D' || str_contains($ordcon, 'CAN') || str_contains($orderupd, 'CAN') || $orderupd === 'INACT' || str_contains($desc, 'CANCEL')) {
                 continue;
             }
 
             $balance = isset($item->balance) ? (float)$item->balance : 0;
             $issued = isset($item->qtyissued) ? (float)$item->qtyissued : 0;
-            $desc = strtoupper($item->item_description ?? '');
+            $majorCategory = trim($item->major_category ?? '');
+            $isPharma = strtoupper(trim($item->is_pharma ?? ''));
 
             if ($balance <= 0 || $issued > 0 || $computedStatus === 'P') {
                 $computedStatus = 'S'; 
@@ -186,54 +256,73 @@ class ClearanceController extends Controller
                 'balance' => $balance
             ];
 
-            // If it's a physical supply, send to CSR. Otherwise, it's a Pharmacy Medication.
-            if (str_contains($desc, 'CSR') || str_contains($desc, 'FACEMASK') || str_contains($desc, 'GLOVE') || str_contains($desc, 'SYRINGE') || str_contains($desc, 'CANNULA') || str_contains($desc, 'PACK') || str_contains($desc, 'MACROSET') || str_contains($desc, 'MICROSET') || str_contains($desc, 'TUBE') || str_contains($desc, 'GAUZE')) {
+            $baseName = trim(preg_replace('/\s*\([^)]*\)$/', '', $desc));
+            $isBarcode = preg_match('/^\d{13}$/', $baseName); 
+
+            $forcePharma = str_contains($desc, 'PHILRX') || str_contains($desc, 'SODIUM CHLORIDE');
+
+            if ($forcePharma) {
+                $pharmacyOrders[] = $cleanItem;
+            } elseif ($isBarcode || $isPharma === 'N' || str_starts_with($majorCategory, '018') || preg_match($csrRegex, $baseName) || str_contains($desc, 'CSR')) {
                 $csrOrders[] = $cleanItem;
             } else {
                 $pharmacyOrders[] = $cleanItem;
             }
         }
 
-        // 6C. Sort Patient Charges (Strictly routed by billing category & overrides)
+        // 6C. Sort Patient Charges
         foreach ($chargeOrders as $item) {
             $category = trim($item->category ?? '');
             $upperCategory = strtoupper($category);
+            $majorCategory = trim($item->major_category ?? '');
+            $isPharma = strtoupper(trim($item->is_pharma ?? ''));
+            $code = strtoupper(trim($item->itemcode ?? ''));
+            $desc = strtoupper($category !== '' ? $item->item_description . ' (' . $category . ')' : $item->item_description);
             
+            if (str_starts_with($code, 'CBROS') || str_contains($desc, 'CBROS') || str_contains($desc, 'CANCEL')) {
+                continue;
+            }
+
             $cleanItem = [
                 'datelog' => $item->datelog,
-                'item_description' => $category !== '' ? $item->item_description . ' (' . $category . ')' : $item->item_description,
+                'item_description' => $desc,
                 'status' => 'S'
             ];
 
-            // Extract the raw item name/code by removing the category in parentheses
-            $baseName = trim(preg_replace('/\s*\([^)]*\)$/', '', $item->item_description));
+            $baseName = trim(preg_replace('/\s*\([^)]*\)$/', '', $desc));
+            $isBarcode = preg_match('/^\d{13}$/', $baseName); 
+            
+            $forcePharma = str_contains($desc, 'PHILRX') || str_contains($desc, 'SODIUM CHLORIDE');
 
-            // THE OVERRIDE: Is it a 13-digit barcode or a known CSR supply?
-            $isBarcode = preg_match('/^\d{13}$/', $baseName);
-            $hasCsrKeyword = preg_match('/\b(SYRINGE|MACROSET|MICROSET|CANNULA|VENFLON|GAUZE|GLOVE|TUBE|PACK|NEEDLE|CATHETER)\b/', strtoupper($baseName));
-
-            // Route items
-            if ($isBarcode || $hasCsrKeyword || preg_match('/\bCSR\b/', $upperCategory) || preg_match('/\bSUPPLIES CSR\b/', $upperCategory)) {
+            if ($forcePharma) {
+                $pharmacyOrders[] = $cleanItem;
+            } elseif ($isBarcode || $isPharma === 'N' || str_starts_with($majorCategory, '018') || preg_match($csrRegex, strtoupper($baseName)) || preg_match('/\bCSR\b/', $upperCategory) || preg_match('/\bSUPPLIES CSR\b/', $upperCategory)) {
                 $csrOrders[] = $cleanItem;
+            } elseif (preg_match('/\bLAB(ORATORY|S)?\b/', $upperCategory)) { 
+                $labOrders[] = $cleanItem; 
+            } elseif (preg_match('/\bRAD|X-?RAY/', $upperCategory)) { 
+                $radioOrders[] = $cleanItem; 
+            } elseif (preg_match('/\bCARD|\bECG\b/', $upperCategory)) { 
+                $cardioOrders[] = $cleanItem; 
+            } elseif (preg_match('/PHARM|DRUG|MEDICINE/', $upperCategory)) { 
+                $pharmacyOrders[] = $cleanItem; 
+            } else {
+                $pharmacyOrders[] = $cleanItem;
             }
-            elseif (preg_match('/\bLAB(ORATORY|S)?\b/', $upperCategory))   { $labOrders[] = $cleanItem; }
-            elseif (preg_match('/\bRAD|X-?RAY/', $upperCategory))          { $radioOrders[] = $cleanItem; }
-            elseif (preg_match('/\bCARD|\bECG\b/', $upperCategory))        { $cardioOrders[] = $cleanItem; }
-            elseif (preg_match('/PHARM|DRUG|MEDICINE/', $upperCategory))   { $pharmacyOrders[] = $cleanItem; }
         }
 
         // 7. Clean up arrays
-        $csrOrders = collect($csrOrders)->unique()->values()->all();
-        $labOrders = collect($labOrders)->unique()->values()->all();
-        $radioOrders = collect($radioOrders)->unique()->values()->all();
-        $cardioOrders = collect($cardioOrders)->unique()->values()->all();
-        $pharmacyOrders = collect($pharmacyOrders)->unique()->values()->all();
+        $csrOrders = collect($csrOrders)->values()->all();
+        $pharmacyOrders = collect($pharmacyOrders)->values()->all(); 
+        
+        $labOrders = collect($labOrders)->unique('item_description')->values()->all();
+        $radioOrders = collect($radioOrders)->unique('item_description')->values()->all();
+        $cardioOrders = collect($cardioOrders)->unique('item_description')->values()->all();
 
         $clearedDepartments = \App\Models\ClearanceLog::where('enccode', $enccode)
             ->pluck('department')
             ->toArray();
 
-        // JSON Return for the Axios Modal
         if ($request->wantsJson() || $request->ajax()) {
             return response()->json([
                 'enccode' => $enccode,
@@ -246,7 +335,6 @@ class ClearanceController extends Controller
             ]);
         }
 
-        // Standard page load fallback
         return inertia('Clearance/Index', [
             'enccode' => $enccode,
             'labOrders' => $labOrders,
@@ -258,7 +346,6 @@ class ClearanceController extends Controller
         ]);
     }
 
-
     public function store(Request $request)
     {
         $request->validate([
@@ -266,20 +353,17 @@ class ClearanceController extends Controller
             'department' => 'required|string',
         ]);
 
-        // 1. Log the clearance for this specific department
         ClearanceLog::firstOrCreate([
             'enccode' => $request->enccode,
             'department' => $request->department,
         ], [
-            'user_id' => $request->user()->id, // FIXED HERE
+            'user_id' => $request->user()->id, 
         ]);
 
-        // 2. Count how many unique departments have cleared this patient
         $clearedCount = ClearanceLog::where('enccode', $request->enccode)
             ->distinct('department')
             ->count('department');
 
-        // 3. The Automated Trigger: If all 5 are cleared, finalize the transaction
         if ($clearedCount >= 5) {
             ClearanceTransaction::where('enccode', $request->enccode)
                 ->update(['overall_status' => 'Cleared']);
@@ -305,7 +389,7 @@ class ClearanceController extends Controller
                 'patient_name' => $request->patient_name,
                 'arrival_datetime' => $request->arrival_datetime,
                 'disposition' => $request->disposition,
-                'room_ward' => $request->user()->department, // FIXED HERE
+                'room_ward' => $request->user()->department, 
                 'overall_status' => 'Routing in Progress',
             ]
         );

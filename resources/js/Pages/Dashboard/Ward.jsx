@@ -8,6 +8,7 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue, cl
 
     const [activeTab, setActiveTab] = useState('active');
     const [isRouting, setIsRouting] = useState(false);
+    const [toastMessage, setToastMessage] = useState(null); // UI-friendly notification state
 
     // Form State
     const [form, setForm] = useState({
@@ -54,9 +55,19 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue, cl
             onSuccess: () => {
                 setIsRouting(false);
                 setForm({ hospital_number: '', patient_name: '', arrival_datetime: '', disposition: '' });
-                alert("Patient successfully routed for clearance!");
+                
+                // UI-friendly Toast instead of browser alert
+                setToastMessage("Patient successfully routed for clearance!");
+                setTimeout(() => {
+                    setToastMessage(null);
+                }, 3000);
             },
-            onError: () => setIsRouting(false)
+            onError: (errors) => {
+                setIsRouting(false);
+                setToastMessage("Failed to route patient. Check inputs.");
+                setTimeout(() => setToastMessage(null), 3000);
+                console.error(errors);
+            }
         });
     };
 
@@ -230,9 +241,7 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue, cl
                                     {/* 5-DEPARTMENT STATUS GRID */}
                                     <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
                                         {allDepartments.map((dept, i) => {
-                                            // Mocking the check based on clearance array
-                                            // In reality, this requires a relationship from your DB
-                                            const isApproved = false; // Replace with actual check logic
+                                            const isApproved = false; 
                                             
                                             return (
                                                 <div key={i} className={`border rounded-lg p-2 text-center cursor-default transition-all duration-200 ${isApproved ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-200'}`}>
@@ -259,6 +268,19 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue, cl
                     </div>
                 </div>
             </div>
+
+            {/* --- SLIDING TOAST NOTIFICATION --- */}
+            {toastMessage && (
+                <div className="fixed top-6 right-6 z-[200] flex items-center bg-teal-600 text-white px-5 py-3.5 rounded-xl shadow-2xl animate-in slide-in-from-top-5 fade-in duration-300">
+                    <div className="bg-teal-500 rounded-full p-1 mr-3">
+                        <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
+                    </div>
+                    <span className="font-bold text-sm tracking-wide">{toastMessage}</span>
+                    <button onClick={() => setToastMessage(null)} className="ml-4 text-teal-200 hover:text-white transition-colors">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+            )}
         </PortalLayout>
     );
 }
