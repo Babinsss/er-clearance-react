@@ -13,7 +13,11 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
     const [isLoadingData, setIsLoadingData] = useState(false);
     const [modalData, setModalData] = useState(null);
     const [activeEnccode, setActiveEnccode] = useState(null);
-    const [toastMessage, setToastMessage] = useState(null); // UI-friendly notification state
+    const [toastMessage, setToastMessage] = useState(null); 
+    
+    // --- NEW: CUSTOM CONFIRMATION STATE ---
+    const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+    const [isClearing, setIsClearing] = useState(false);
 
     const previousQueueCount = useRef(pendingPatients.length);
     const warnedPatients = useRef([]); 
@@ -23,6 +27,14 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
         patient.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
         patient.enccode.includes(searchTerm)
     );
+
+    // --- SMART WAIT TIME FORMATTER ---
+    const formatWaitTime = (minutes) => {
+        if (minutes < 60) return `${minutes} min`;
+        const h = Math.floor(minutes / 60);
+        const m = minutes % 60;
+        return `${h}h ${m}m`;
+    };
 
     useEffect(() => {
         const pollInterval = setInterval(() => {
@@ -105,11 +117,20 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
 
     const hasUnservedItems = () => {
         const orders = getActiveOrders();
-        return orders.some(item => item.status !== 'S');
+        // Only disable the button if an item is NOT Served ('S') AND NOT Partial ('P')
+        return orders.some(item => item.status !== 'S' && item.status !== 'P');
     };
 
-    // --- UI-FRIENDLY CLEAR FUNCTION ---
-    const handleClearDepartment = () => {
+    // --- UI-FRIENDLY CLEAR FUNCTIONS ---
+    
+    // 1. Triggers the custom modal instead of browser alert
+    const handleClearClick = () => {
+        setIsConfirmOpen(true);
+    };
+
+    // 2. Executes the actual database clearance
+    const executeClearDepartment = () => {
+        setIsClearing(true);
         router.post('/clearance', {
             enccode: activeEnccode,
             department: department
@@ -117,15 +138,15 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
             preserveScroll: true,
             onSuccess: () => {
                 setToastMessage(`${department} successfully cleared!`);
-                setIsModalOpen(false);
-                
-                // Hide toast automatically after 3 seconds
-                setTimeout(() => {
-                    setToastMessage(null);
-                }, 3000);
+                setIsConfirmOpen(false); // Close confirm modal
+                setIsModalOpen(false);   // Close inspect modal
+                setIsClearing(false);
+                setTimeout(() => setToastMessage(null), 3000);
             },
             onError: (errors) => {
                 setToastMessage('Failed to clear department. Check console.');
+                setIsConfirmOpen(false);
+                setIsClearing(false);
                 setTimeout(() => setToastMessage(null), 3000);
                 console.error(errors);
             }
@@ -146,7 +167,7 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                             <div className="text-xl font-bold text-slate-800">{department}</div>
                         </div>
                         
-                        <button onClick={() => setSoundEnabled(!soundEnabled)} className="text-slate-400 hover:text-teal-500 transition-colors p-1 bg-slate-50 rounded-md border border-slate-200 shadow-sm">
+                        <button onClick={() => setSoundEnabled(!soundEnabled)} className="text-slate-400 hover:text-teal-500 transition-colors p-1 bg-slate-50 rounded-md border border-slate-200 shadow-sm" title={soundEnabled ? "Mute Alerts" : "Enable Alerts"}>
                             {soundEnabled ? (
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5 10c0-1.1.9-2 2-2h2l4-4v16l-4-4H7a2 2 0 01-2-2v-4z"></path></svg>
                             ) : (
@@ -215,7 +236,7 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                                             const breached = waitMinutes >= 15;
 
                                             return (
-                                                <tr key={index} className={`hover:bg-slate-50 transition-all cursor-default ${breached && activeModule === 'pending' ? 'bg-rose-50/30' : ''}`}>
+                                                <tr key={index} className={`hover:bg-slate-50 transition-colors cursor-default ${breached && activeModule === 'pending' ? 'bg-rose-50/30' : ''}`}>
                                                     <td className={`p-4 border-l-4 ${activeModule === 'completed' ? 'border-emerald-400' : (breached ? 'border-rose-400' : 'border-amber-400')}`}>
                                                         <div className={`font-bold text-base ${breached && activeModule === 'pending' ? 'text-rose-900' : 'text-slate-800'}`}>{patient.name}</div>
                                                         <div className="text-xs text-slate-500 mt-1 uppercase tracking-wide font-semibold break-all">
@@ -233,12 +254,15 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
 
                                                     <td className="p-4 text-center">
                                                         {activeModule === 'pending' ? (
-                                                            <div className={`inline-flex items-center space-x-1 px-2 py-1 rounded-md text-xs font-bold ${breached ? 'bg-rose-100 text-rose-700 animate-pulse' : 'bg-slate-100 text-slate-600'}`}>
+                                                            <div className={`inline-flex items-center space-x-1 px-2.5 py-1 rounded-md text-xs font-bold ${breached ? 'bg-rose-100 text-rose-700 animate-pulse' : 'bg-slate-100 text-slate-600'}`}>
                                                                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                                                                <span>{waitMinutes} min</span>
+                                                                <span>{formatWaitTime(waitMinutes)}</span>
                                                             </div>
                                                         ) : (
-                                                            <span className="text-xs text-emerald-600 font-bold uppercase">Processed</span>
+                                                            <span className="text-xs text-emerald-600 font-bold uppercase tracking-wide flex justify-center items-center">
+                                                                <svg className="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
+                                                                Processed
+                                                            </span>
                                                         )}
                                                     </td>
 
@@ -268,15 +292,15 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                 </div>
             </div>
 
-            {/* --- THE POP-UP MODAL --- */}
+            {/* --- INSPECTION MODAL --- */}
             {isModalOpen && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 sm:p-6 transition-opacity">
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/70 backdrop-blur-sm p-4 sm:p-6 transition-opacity">
                     <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200" style={{ maxHeight: '90vh' }}>
                         
                         <div className="px-6 py-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
                             <div>
                                 <h3 className="text-xl font-bold text-slate-800">{department} Review Items</h3>
-                                <p className="text-xs text-slate-500 font-medium mt-1">Patient Encounter: <span className="font-mono bg-slate-200 px-1 rounded">{activeEnccode}</span></p>
+                                <p className="text-xs text-slate-500 font-medium mt-1">Patient Encounter: <span className="font-mono bg-slate-200 px-1.5 py-0.5 rounded">{activeEnccode}</span></p>
                             </div>
                             <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-rose-500 bg-white border border-slate-200 rounded-md p-1.5 transition-colors">
                                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
@@ -285,13 +309,33 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
 
                         <div className="p-6 overflow-y-auto bg-slate-50 flex-1">
                             {isLoadingData ? (
-                                <div className="flex flex-col items-center justify-center py-20">
-                                    <svg className="w-10 h-10 text-teal-600 animate-spin mb-4" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                                    <span className="text-slate-500 font-bold tracking-wide">Loading Database Records...</span>
+                                <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm animate-pulse">
+                                    <div className="flex justify-between items-center mb-6 border-b border-slate-100 pb-4">
+                                        <div className="flex items-center space-x-3">
+                                            <div className="w-10 h-10 bg-slate-200 rounded-lg"></div>
+                                            <div className="space-y-2">
+                                                <div className="h-4 w-32 bg-slate-200 rounded"></div>
+                                                <div className="h-3 w-20 bg-slate-100 rounded"></div>
+                                            </div>
+                                        </div>
+                                        <div className="h-9 w-32 bg-slate-200 rounded-lg"></div>
+                                    </div>
+                                    <div className="space-y-3">
+                                        {[1, 2, 3, 4].map(i => (
+                                            <div key={i} className="flex justify-between items-center p-3 border border-slate-50 rounded-lg">
+                                                <div className="h-4 w-1/2 bg-slate-100 rounded"></div>
+                                                <div className="h-6 w-20 bg-slate-100 rounded-full"></div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="text-center mt-6">
+                                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Querying iHomis Database...</span>
+                                    </div>
                                 </div>
                             ) : modalData ? (
                                 <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-                                    <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-white">
+                                    
+                                    <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-white sticky top-0 z-10 shadow-sm">
                                         <div className="flex items-center space-x-3">
                                             <div className="p-2 bg-teal-50 text-teal-600 rounded-lg">
                                                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path></svg>
@@ -303,12 +347,12 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                                         </div>
                                         
                                         <button 
-                                            onClick={handleClearDepartment}
+                                            onClick={handleClearClick}
                                             disabled={hasUnservedItems()}
-                                            className={`px-4 py-2 text-sm font-bold rounded-lg shadow-sm transition-all focus:outline-none flex items-center space-x-2 
+                                            className={`px-4 py-2.5 text-sm font-bold rounded-lg transition-all focus:outline-none flex items-center space-x-2 
                                                 ${hasUnservedItems() 
                                                     ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' 
-                                                    : 'bg-teal-600 text-white hover:bg-teal-700 hover:shadow-md border border-transparent'}`}
+                                                    : 'bg-teal-600 text-white hover:bg-teal-700 hover:shadow-md border border-transparent shadow-sm'}`}
                                         >
                                             {hasUnservedItems() ? (
                                                 <>
@@ -317,7 +361,7 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                                                 </>
                                             ) : (
                                                 <>
-                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path></svg>
+                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
                                                     <span>Clear Department</span>
                                                 </>
                                             )}
@@ -326,8 +370,12 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                                     
                                     <div className="divide-y divide-slate-100 max-h-[50vh] overflow-y-auto">
                                         {getActiveOrders().length === 0 ? (
-                                            <div className="p-8 text-center text-slate-400 italic">
-                                                No active orders found for this encounter.
+                                            <div className="flex flex-col items-center justify-center p-12 text-center bg-slate-50/50">
+                                                <div className="bg-white p-3 rounded-full shadow-sm border border-slate-100 mb-3">
+                                                    <svg className="w-8 h-8 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                                </div>
+                                                <span className="text-slate-600 font-bold text-sm">No Records Found</span>
+                                                <p className="text-xs text-slate-400 mt-1 font-medium">There are no active {department} orders for this encounter.</p>
                                             </div>
                                         ) : (
                                             getActiveOrders().map((item, idx) => (
@@ -337,6 +385,10 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                                                         {item.status === 'S' ? (
                                                             <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-700 border border-emerald-200 tracking-wider">
                                                                 SERVED
+                                                            </span>
+                                                        ) : item.status === 'P' ? (
+                                                            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-700 border border-amber-200 tracking-wider">
+                                                                PARTIAL
                                                             </span>
                                                         ) : (
                                                             <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-rose-100 text-rose-700 border border-rose-200 tracking-wider">
@@ -355,9 +407,45 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                 </div>
             )}
 
+            {/* --- CUSTOM CONFIRMATION MODAL --- */}
+            {isConfirmOpen && (
+                <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity">
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in duration-200">
+                        <div className="p-6 text-center">
+                            <div className="w-16 h-16 bg-teal-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-teal-100 shadow-sm">
+                                <svg className="w-8 h-8 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                            </div>
+                            <h3 className="text-xl font-bold text-slate-800 mb-2">Confirm Clearance</h3>
+                            <p className="text-sm text-slate-500 mb-6 leading-relaxed">
+                                Are you sure you want to clear <strong>{department}</strong>? This action will be officially logged under your account.
+                            </p>
+                            <div className="flex space-x-3">
+                                <button 
+                                    onClick={() => setIsConfirmOpen(false)}
+                                    className="flex-1 px-4 py-2.5 bg-slate-100 text-slate-700 font-bold rounded-lg hover:bg-slate-200 transition-colors border border-slate-200"
+                                >
+                                    Cancel
+                                </button>
+                                <button 
+                                    onClick={executeClearDepartment}
+                                    disabled={isClearing}
+                                    className="flex-1 px-4 py-2.5 bg-teal-600 text-white font-bold rounded-lg hover:bg-teal-700 transition-colors shadow-sm flex justify-center items-center"
+                                >
+                                    {isClearing ? (
+                                        <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                    ) : (
+                                        'Yes, Clear'
+                                    )}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* --- SLIDING TOAST NOTIFICATION --- */}
             {toastMessage && (
-                <div className="fixed top-6 right-6 z-[200] flex items-center bg-teal-600 text-white px-5 py-3.5 rounded-xl shadow-2xl animate-in slide-in-from-top-5 fade-in duration-300">
+                <div className="fixed top-6 right-6 z-[300] flex items-center bg-teal-600 text-white px-5 py-3.5 rounded-xl shadow-2xl animate-in slide-in-from-top-5 fade-in duration-300">
                     <div className="bg-teal-500 rounded-full p-1 mr-3">
                         <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
                     </div>

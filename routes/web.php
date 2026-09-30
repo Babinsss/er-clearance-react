@@ -11,8 +11,8 @@ use Inertia\Inertia;
 
 Route::middleware(['auth', 'verified'])->group(function () {
     
-    Route::get('/', function () { // <-- Removed Request injection here
-        $user = Auth::user(); // <-- BULLETPROOF USER CHECK
+    Route::get('/', function () { 
+        $user = Auth::user(); 
         
         // --- 0. ICT / ADMIN LOGIC ---
         if ($user->department === 'ICT / Admin') {
@@ -31,9 +31,15 @@ Route::middleware(['auth', 'verified'])->group(function () {
         }
 
         // --- 2. LIVE COST CENTER QUEUE LOGIC ---
-        $costCenters = ['Laboratory', 'Radiology', 'Pharmacy', 'Cardiopulmonary', 'CSR'];
+        // Dynamically check if the user's department is categorized as a 'Cost Center' in the database
+        $deptRecord = \App\Models\Department::where('name', $user->department)->first();
+        
+        // Safety fallback array (now includes 'Cardio Pulmo')
+        $costCenters = ['Laboratory', 'Radiology', 'Pharmacy', 'Cardiopulmonary', 'CSR', 'Cardio Pulmo'];
 
-        if (in_array($user->department, $costCenters)) {
+        // Trigger if the database category is 'Cost Center' OR if the name is in the fallback array
+        if (($deptRecord && $deptRecord->category === 'Cost Center') || in_array($user->department, $costCenters)) {
+            
             $myClearedLogs = \App\Models\ClearanceLog::where('department', $user->department)
                 ->orderBy('created_at', 'desc')
                 ->get()
@@ -76,13 +82,25 @@ Route::middleware(['auth', 'verified'])->group(function () {
         }
 
         // --- 3. LIVE WARD DASHBOARD LOGIC ---
-        $search = request('search'); // <-- Safer helper for closures
+        $search = request('search');
         $patient = null;
         $clearances = [];
 
         $wardTransactions = \App\Models\ClearanceTransaction::where('room_ward', $user->department)
             ->orderBy('updated_at', 'desc')
             ->get();
+
+        // Fetch all clearance logs for the active queue
+        $enccodes = $wardTransactions->pluck('enccode')->toArray();
+        $allLogs = \App\Models\ClearanceLog::whereIn('enccode', $enccodes)->get()->groupBy('enccode');
+
+        // Attach the cleared departments to each transaction
+        $wardTransactions->transform(function($tx) use ($allLogs) {
+            $tx->cleared_departments = isset($allLogs[$tx->enccode]) 
+                ? $allLogs[$tx->enccode]->pluck('department')->toArray() 
+                : [];
+            return $tx;
+        });
 
         $activeQueue = $wardTransactions->where('overall_status', 'Routing in Progress')->values();
         $clearedQueue = $wardTransactions->where('overall_status', 'Cleared')->values();

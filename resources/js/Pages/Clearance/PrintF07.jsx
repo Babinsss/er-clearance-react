@@ -4,16 +4,15 @@ import { Head, usePage } from '@inertiajs/react';
 export default function PrintF07({ transaction = {}, logs = [] }) {
     const { auth } = usePage().props;
     
-    // Automatically trigger the print dialog when the page loads
     useEffect(() => {
         setTimeout(() => {
-            window.focus(); // Forces Chrome to look at the hidden iframe
+            window.focus(); 
             window.print();
-        }, 800); // 800ms delay ensures the DOM fully paints before printing
+        }, 800); 
     }, []);
 
+    // Gets the exact time the Cost Center clicked "Clear" (Time Released)
     const getSignatory = (deptName) => {
-        // Safe matching for "Cardiopulmonary Unit" vs "Cardiopulmonary"
         const searchDept = deptName.replace(' Unit', '').toLowerCase();
         const log = logs.find(l => (l.department || '').toLowerCase().includes(searchDept));
         
@@ -23,32 +22,46 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
         } : null;
     };
 
-    const fixedDepartments = ['CSR', 'Radiology', 'Laboratory', 'Pharmacy', 'Cardiopulmonary Unit'];
+    // Formats the exact time the Ward initiated the routing (Time Received)
+    const timeReceived = transaction?.created_at 
+        ? new Date(transaction.created_at).toLocaleTimeString('en-US', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit' })
+        : '';
+
+    const fixedDepartments = ['CSR', 'Radiology', 'Laboratory', 'Pharmacy', 'Cardio Pulmo'];
     const dispositions = ['Improved', 'HAMA', 'Transferred', 'Died', 'Absconded'];
 
     return (
-        <div className="bg-gray-200 min-h-screen font-serif text-black flex flex-col items-center p-4">
+        <div className="bg-slate-200 print:bg-white min-h-screen font-serif text-black flex flex-col items-center p-4 print:p-0">
             <Head title={`Clearance Slip - RMH-BCS-F07 - ${transaction?.patient_name}`} />
 
             <style dangerouslySetInnerHTML={{ __html: `
                 @media print {
-                    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; margin: 0; padding: 0; background: white !important; }
                     @page { size: 8.5in 5.5in landscape; margin: 0.15in; }
+                    html, body, #app, [data-page] { 
+                        background-color: #ffffff !important; 
+                        -webkit-print-color-adjust: exact !important; 
+                        print-color-adjust: exact !important; 
+                        margin: 0; 
+                        padding: 0; 
+                    }
+                    * {
+                        box-shadow: none !important;
+                    }
                     .no-print { display: none !important; }
                 }
             `}} />
 
             <div className="no-print fixed top-4 right-4 z-50 flex space-x-2">
-                <button onClick={() => window.close()} className="bg-white hover:bg-slate-100 text-slate-800 font-sans font-bold py-2 px-4 rounded-lg shadow border border-slate-300">
+                <button onClick={() => window.close()} className="bg-white hover:bg-slate-100 text-slate-800 font-sans font-bold py-2 px-4 rounded-lg shadow-sm border border-slate-300 transition-colors">
                     Close Tab
                 </button>
-                <button onClick={() => { window.focus(); window.print(); }} className="bg-slate-900 hover:bg-slate-800 text-white font-sans font-bold py-2 px-6 rounded-lg shadow-lg flex items-center space-x-2 border border-slate-700">
+                <button onClick={() => { window.focus(); window.print(); }} className="bg-teal-700 hover:bg-teal-800 text-white font-sans font-bold py-2 px-6 rounded-lg shadow-md flex items-center space-x-2 border border-teal-800 transition-colors">
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
                     <span>Print Form F07 (Landscape)</span>
                 </button>
             </div>
 
-            <div className="bg-white w-full max-w-[800px] border border-black p-1 shadow-lg text-[12px] leading-tight relative mt-12 print:mt-0">
+            <div className="bg-white print:bg-white w-full max-w-[800px] border border-black p-1 shadow-xl print:shadow-none text-[12px] leading-tight relative mt-16 print:mt-0">
                 <div className="border border-black flex flex-col">
 
                     <div className="flex border-b border-black h-16 shrink-0">
@@ -131,17 +144,17 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
                     </div>
 
                     <div className="shrink-0">
-                        <div className="px-2 py-1">
+                        <div className="px-2 py-1 font-medium italic">
                             Hospital Charges billed to the patient as verified by:
                         </div>
                         
                         <table className="w-full border-t border-black text-center border-collapse">
                             <thead>
-                                <tr className="border-b border-black text-[12px]">
-                                    <th className="border-r border-black font-normal py-1.5 w-[36%] text-left pl-2">Department</th>
-                                    <th className="border-r border-black font-normal py-1.5 w-[32%]">Printed Name</th>
-                                    <th className="border-r border-black font-normal py-1.5 w-[16%]">Time Received</th>
-                                    <th className="font-normal py-1.5 w-[16%]">Time Released</th>
+                                <tr className="border-b border-black text-[12px] bg-gray-50 print:bg-white">
+                                    <th className="border-r border-black font-bold py-1.5 w-[36%] text-left pl-2">Department</th>
+                                    <th className="border-r border-black font-bold py-1.5 w-[32%]">Printed Name</th>
+                                    <th className="border-r border-black font-bold py-1.5 w-[16%]">Time Received</th>
+                                    <th className="font-bold py-1.5 w-[16%]">Time Released</th>
                                 </tr>
                             </thead>
                             <tbody className="text-[11px]">
@@ -149,13 +162,15 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
                                     const sig = getSignatory(deptName);
                                     return (
                                         <tr key={idx} className="border-b border-black h-11">
-                                            <td className="border-r border-black py-2.5 text-left px-2 font-medium leading-tight">{deptName}</td>
+                                            <td className="border-r border-black py-2.5 text-left px-2 font-bold leading-tight uppercase tracking-wider">{deptName}</td>
                                             
                                             {sig ? (
                                                 <>
                                                     <td className="border-r border-black py-2.5 font-sans font-bold text-[10px] uppercase tracking-wide">{sig.name}</td>
-                                                    <td className="border-r border-black py-2.5 font-sans text-[10px]">{sig.time}</td>
-                                                    <td className="py-2.5 font-sans text-[10px]">{sig.time}</td>
+                                                    {/* Time Received (When Ward routed it) */}
+                                                    <td className="border-r border-black py-2.5 font-sans font-semibold text-[10px]">{timeReceived}</td>
+                                                    {/* Time Released (When Cost Center cleared it) */}
+                                                    <td className="py-2.5 font-sans font-semibold text-[10px]">{sig.time}</td>
                                                 </>
                                             ) : (
                                                 <>

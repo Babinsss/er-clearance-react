@@ -1,14 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Head, router, usePage } from '@inertiajs/react';
 import PortalLayout from '@/Layouts/PortalLayout';
 
-export default function Ward({ searchQuery, patient, clearances, activeQueue, clearedQueue }) {
+export default function Ward({ searchQuery, patient, clearances, activeQueue = [], clearedQueue = [] }) {
     const { auth } = usePage().props;
     const wardName = auth.user.department;
 
     const [activeTab, setActiveTab] = useState('active');
     const [isRouting, setIsRouting] = useState(false);
-    const [toastMessage, setToastMessage] = useState(null); // UI-friendly notification state
+    const [isSearching, setIsSearching] = useState(false);
+    const [toastMessage, setToastMessage] = useState(null);
+
+    // Audio Notification Tracker
+    const previousClearedCount = useRef(clearedQueue.length);
 
     // Form State
     const [form, setForm] = useState({
@@ -18,13 +22,39 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue, cl
         disposition: patient?.disposition || '',
     });
 
-    // Debounced Search for Hospital Number
+    // --- REAL-TIME POLLING ENGINE ---
+    useEffect(() => {
+        const pollInterval = setInterval(() => {
+            router.reload({ 
+                only: ['activeQueue', 'clearedQueue', 'patient', 'clearances'], 
+                preserveScroll: true, 
+                preserveState: true 
+            });
+        }, 5000); // Refreshes queue data every 5 seconds
+
+        // Play sound if a patient moves to the cleared queue
+        if (clearedQueue.length > previousClearedCount.current) {
+            new Audio('/sounds/epic_26.mp3').play().catch(() => {});
+        }
+        previousClearedCount.current = clearedQueue.length;
+
+        return () => clearInterval(pollInterval);
+    }, [clearedQueue]);
+
+    // --- DEBOUNCED SEARCH ---
     useEffect(() => {
         if (form.hospital_number.length > 5 && form.hospital_number !== searchQuery) {
+            setIsSearching(true);
             const timer = setTimeout(() => {
-                router.get('/', { search: form.hospital_number }, { preserveState: true, preserveScroll: true });
+                router.get('/', { search: form.hospital_number }, { 
+                    preserveState: true, 
+                    preserveScroll: true,
+                    onFinish: () => setIsSearching(false)
+                });
             }, 500);
             return () => clearTimeout(timer);
+        } else if (form.hospital_number.length <= 5) {
+            setIsSearching(false);
         }
     }, [form.hospital_number]);
 
@@ -37,6 +67,7 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue, cl
                 arrival_datetime: patient.arrival_datetime || '',
                 disposition: patient.disposition || ''
             }));
+            setIsSearching(false);
         }
     }, [patient]);
 
@@ -55,12 +86,8 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue, cl
             onSuccess: () => {
                 setIsRouting(false);
                 setForm({ hospital_number: '', patient_name: '', arrival_datetime: '', disposition: '' });
-                
-                // UI-friendly Toast instead of browser alert
                 setToastMessage("Patient successfully routed for clearance!");
-                setTimeout(() => {
-                    setToastMessage(null);
-                }, 3000);
+                setTimeout(() => setToastMessage(null), 3000);
             },
             onError: (errors) => {
                 setIsRouting(false);
@@ -72,11 +99,12 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue, cl
     };
 
     const displayQueue = activeTab === 'active' ? activeQueue : clearedQueue;
-    const allDepartments = ['Pharmacy', 'Laboratory', 'Radiology', 'Cardiopulmonary', 'CSR'];
+    // Change 'Cardiopulmonary' to 'Cardio Pulmo'
+    const allDepartments = ['Pharmacy', 'Laboratory', 'Radiology', 'Cardio Pulmo', 'CSR'];
 
     return (
         <PortalLayout>
-            <Head title={`${wardName} Dashboard - Clearance`} />
+            <Head title={`${wardName} Dashboard`} />
             
             <div className="flex flex-col md:flex-row gap-6 w-full p-6 bg-slate-100 min-h-[calc(100vh-64px)] font-sans">
                 
@@ -91,12 +119,15 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue, cl
 
                     <form onSubmit={handleRoutePatient} className="space-y-4 flex-1">
                         <div>
-                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Hospital Number</label>
+                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1 flex justify-between">
+                                <span>Hospital Number</span>
+                                {isSearching && <span className="text-teal-500 animate-pulse">Searching...</span>}
+                            </label>
                             <input 
                                 type="text" 
                                 value={form.hospital_number}
                                 onChange={e => setForm({...form, hospital_number: e.target.value})}
-                                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 font-mono uppercase" 
+                                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 font-mono uppercase transition-colors" 
                                 placeholder="e.g. 000000128607" 
                                 required 
                             />
@@ -104,13 +135,17 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue, cl
 
                         <div>
                             <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Patient Name</label>
-                            <input 
-                                type="text" 
-                                value={form.patient_name}
-                                readOnly
-                                className="w-full px-3 py-2 bg-slate-100 border border-slate-300 rounded-lg text-sm text-slate-600 focus:ring-0 uppercase cursor-not-allowed" 
-                                placeholder="LASTNAME, FIRSTNAME" 
-                            />
+                            {isSearching ? (
+                                <div className="w-full h-[38px] bg-slate-200 animate-pulse rounded-lg border border-slate-300"></div>
+                            ) : (
+                                <input 
+                                    type="text" 
+                                    value={form.patient_name}
+                                    readOnly
+                                    className="w-full px-3 py-2 bg-slate-100 border border-slate-300 rounded-lg text-sm text-slate-600 focus:ring-0 uppercase cursor-not-allowed" 
+                                    placeholder="LASTNAME, FIRSTNAME" 
+                                />
+                            )}
                         </div>
 
                         {/* FINANCIAL CARDS */}
@@ -164,13 +199,18 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue, cl
                         <div className="pt-4 mt-6 border-t border-slate-100">
                             <button 
                                 type="submit" 
-                                disabled={!patient || isRouting}
+                                disabled={!patient || isRouting || patient.is_routed}
                                 className="w-full bg-teal-600 hover:bg-teal-700 disabled:bg-slate-400 text-white font-bold py-3 px-4 rounded-lg shadow-sm transition-colors flex items-center justify-center space-x-2 disabled:cursor-not-allowed"
                             >
                                 {isRouting ? (
                                     <>
                                         <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
                                         <span>Routing...</span>
+                                    </>
+                                ) : patient?.is_routed ? (
+                                    <>
+                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path></svg>
+                                        <span>Already Routed</span>
                                     </>
                                 ) : (
                                     <>
@@ -186,9 +226,15 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue, cl
                 {/* MAIN CONTENT: DYNAMIC TRACKING */}
                 <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col overflow-hidden">
                     
-                    {/* HEADER WITH TABS */}
                     <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex flex-col md:flex-row justify-between items-center gap-4 shrink-0">
-                        <h3 className="text-lg font-bold text-slate-800">Clearance Tracker</h3>
+                        <div className="flex items-center space-x-3">
+                            <h3 className="text-lg font-bold text-slate-800">Clearance Tracker</h3>
+                            {/* Live polling indicator */}
+                            <span className="flex h-2 w-2 relative" title="Live Sync Active">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal-400 opacity-75"></span>
+                                <span className="relative inline-flex rounded-full h-2 w-2 bg-teal-500"></span>
+                            </span>
+                        </div>
                         
                         <div className="flex p-1 bg-slate-200/60 rounded-lg shadow-inner">
                             <button 
@@ -215,8 +261,8 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue, cl
                             </div>
                         ) : (
                             displayQueue.map((tx, idx) => (
-                                <div key={idx} className={`bg-white border border-slate-200 rounded-xl p-4 shadow-sm select-none ${activeTab === 'completed' ? 'opacity-80' : ''}`}>
-                                    <div className="flex justify-between items-center mb-4">
+                                <div key={idx} className={`bg-white border border-slate-200 rounded-xl p-4 shadow-sm select-none transition-all duration-300 ${activeTab === 'completed' ? 'opacity-80 border-emerald-200' : 'border-slate-200 hover:shadow-md'}`}>
+                                    <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-3">
                                         <div>
                                             <h4 className="font-bold text-slate-800 text-lg">
                                                 {tx.patient_name}
@@ -226,30 +272,34 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue, cl
                                         </div>
                                         <div className="text-right">
                                             {tx.overall_status === 'Cleared' ? (
-                                                <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                                <span className="inline-flex items-center px-3 py-1.5 rounded-md text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
                                                     <svg className="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
                                                     Fully Cleared
                                                 </span>
                                             ) : (
-                                                <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                                                <span className="inline-flex items-center px-3 py-1.5 rounded-md text-xs font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                                                    <svg className="w-3 h-3 mr-1.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
                                                     Routing in Progress
                                                 </span>
                                             )}
                                         </div>
                                     </div>
 
-                                    {/* 5-DEPARTMENT STATUS GRID */}
+                                    {/* DYNAMIC 5-DEPARTMENT STATUS GRID */}
                                     <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
                                         {allDepartments.map((dept, i) => {
-                                            const isApproved = false; 
+                                            // The Magic: Checks the backend's array of cleared departments!
+                                            const isApproved = tx.cleared_departments?.includes(dept);
                                             
                                             return (
-                                                <div key={i} className={`border rounded-lg p-2 text-center cursor-default transition-all duration-200 ${isApproved ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-200'}`}>
-                                                    <div className="text-[10px] font-black uppercase text-slate-500 mb-1 truncate">{dept}</div>
+                                                <div key={i} className={`border rounded-lg p-2.5 text-center cursor-default transition-all duration-500 ${isApproved ? 'bg-emerald-50 border-emerald-300 shadow-sm' : 'bg-slate-50 border-slate-200'}`}>
+                                                    <div className={`text-[10px] font-black uppercase mb-1 truncate transition-colors ${isApproved ? 'text-emerald-700' : 'text-slate-500'}`}>
+                                                        {dept}
+                                                    </div>
                                                     
                                                     {isApproved ? (
                                                         <span className="text-emerald-600 text-xs font-bold flex items-center justify-center space-x-1">
-                                                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
+                                                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
                                                             <span>Cleared</span>
                                                         </span>
                                                     ) : (
