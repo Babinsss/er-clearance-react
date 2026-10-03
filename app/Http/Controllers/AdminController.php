@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\User;
 use App\Models\Department;
+use App\Models\ClearanceLog;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
@@ -22,6 +23,44 @@ class AdminController extends Controller
             'staff' => $staff,
             'departments' => $departments
         ]);
+    }
+
+    // --- NEW: ANALYTICS ENGINE ---
+    public function getAnalytics(Request $request)
+    {
+        if ($request->user()->department !== 'ICT / Admin') abort(403);
+
+        // Fetch logs from the last 30 days
+        $logs = ClearanceLog::where('created_at', '>=', now()->subDays(30))
+            ->with('transaction') 
+            ->get();
+
+        $departmentStats = [];
+
+        foreach ($logs as $log) {
+            if (!$log->transaction) continue;
+
+            $wardTime = $log->transaction->created_at;
+            $clearTime = $log->created_at;
+            
+            // Calculate turnaround time in minutes
+            $minutes = $wardTime->diffInMinutes($clearTime);
+            $dept = $log->department;
+
+            if (!isset($departmentStats[$dept])) {
+                $departmentStats[$dept] = ['total_minutes' => 0, 'count' => 0];
+            }
+
+            $departmentStats[$dept]['total_minutes'] += $minutes;
+            $departmentStats[$dept]['count']++;
+        }
+
+        $averages = [];
+        foreach ($departmentStats as $dept => $data) {
+            $averages[$dept] = round($data['total_minutes'] / $data['count']);
+        }
+
+        return response()->json($averages);
     }
 
     // --- STAFF MANAGEMENT ---

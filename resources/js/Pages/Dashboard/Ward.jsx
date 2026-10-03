@@ -11,10 +11,8 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
     const [isSearching, setIsSearching] = useState(false);
     const [toastMessage, setToastMessage] = useState(null);
 
-    // Audio Notification Tracker
     const previousClearedCount = useRef(clearedQueue.length);
 
-    // Form State
     const [form, setForm] = useState({
         hospital_number: searchQuery || '',
         patient_name: patient?.name || '',
@@ -22,26 +20,37 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
         disposition: patient?.disposition || '',
     });
 
-    // --- REAL-TIME POLLING ENGINE ---
     useEffect(() => {
+        if (window.Echo) {
+            window.Echo.channel('clearance-updates')
+                .listen('PatientRouted', (e) => { 
+                    router.reload({ 
+                        only: ['activeQueue', 'clearedQueue', 'patient', 'clearances'], 
+                        preserveScroll: true, 
+                        preserveState: true 
+                    });
+                });
+        }
+
         const pollInterval = setInterval(() => {
             router.reload({ 
                 only: ['activeQueue', 'clearedQueue', 'patient', 'clearances'], 
                 preserveScroll: true, 
                 preserveState: true 
             });
-        }, 5000); // Refreshes queue data every 5 seconds
+        }, 5000); 
 
-        // Play sound if a patient moves to the cleared queue
         if (clearedQueue.length > previousClearedCount.current) {
-            new Audio('/sounds/epic_26.mp3').play().catch(() => {});
+            new Audio('/sounds/notif.wav').play().catch(() => {});
         }
         previousClearedCount.current = clearedQueue.length;
 
-        return () => clearInterval(pollInterval);
+        return () => {
+            clearInterval(pollInterval);
+            if (window.Echo) window.Echo.leaveChannel('clearance-updates');
+        };
     }, [clearedQueue]);
 
-    // --- DEBOUNCED SEARCH ---
     useEffect(() => {
         if (form.hospital_number.length > 5 && form.hospital_number !== searchQuery) {
             setIsSearching(true);
@@ -58,7 +67,6 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
         }
     }, [form.hospital_number]);
 
-    // Update form when backend finds a patient
     useEffect(() => {
         if (patient) {
             setForm(prev => ({
@@ -99,7 +107,6 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
     };
 
     const displayQueue = activeTab === 'active' ? activeQueue : clearedQueue;
-    // Change 'Cardiopulmonary' to 'Cardio Pulmo'
     const allDepartments = ['Pharmacy', 'Laboratory', 'Radiology', 'Cardio Pulmo', 'CSR'];
 
     return (
@@ -117,7 +124,7 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                         </div>
                     </div>
 
-                    <form onSubmit={handleRoutePatient} className="space-y-4 flex-1">
+                    <form onSubmit={handleRoutePatient} className="space-y-5 flex-1">
                         <div>
                             <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1 flex justify-between">
                                 <span>Hospital Number</span>
@@ -133,43 +140,28 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                             />
                         </div>
 
-                        <div>
+                        <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
                             <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Patient Name</label>
                             {isSearching ? (
-                                <div className="w-full h-[38px] bg-slate-200 animate-pulse rounded-lg border border-slate-300"></div>
+                                <div className="w-full h-8 bg-slate-200 animate-pulse rounded border border-slate-300"></div>
                             ) : (
-                                <input 
-                                    type="text" 
-                                    value={form.patient_name}
-                                    readOnly
-                                    className="w-full px-3 py-2 bg-slate-100 border border-slate-300 rounded-lg text-sm text-slate-600 focus:ring-0 uppercase cursor-not-allowed" 
-                                    placeholder="LASTNAME, FIRSTNAME" 
-                                />
+                                <div>
+                                    <input 
+                                        type="text" 
+                                        value={form.patient_name}
+                                        readOnly
+                                        className="w-full px-0 py-1 bg-transparent border-transparent text-sm font-bold text-slate-800 focus:ring-0 uppercase cursor-default" 
+                                        placeholder="LASTNAME, FIRSTNAME" 
+                                    />
+                                    {patient?.enccode && (
+                                        <p className="text-[10px] font-mono text-slate-400 mt-1 uppercase">ENC: {patient.enccode}</p>
+                                    )}
+                                </div>
                             )}
                         </div>
 
-                        {/* FINANCIAL CARDS */}
-                        <div className="grid grid-cols-2 gap-2 mt-4 pt-4 border-t border-slate-100">
-                            <div className="bg-blue-50 p-2 rounded border border-blue-100 shadow-sm">
-                                <p className="text-[9px] text-blue-600 uppercase font-bold">Total Charges</p>
-                                <p className="text-sm font-black text-slate-800">₱ 0.00</p>
-                            </div>
-                            <div className="bg-amber-50 p-2 rounded border border-amber-100 shadow-sm">
-                                <p className="text-[9px] text-amber-600 uppercase font-bold">Net Amount</p>
-                                <p className="text-sm font-black text-slate-800">₱ 0.00</p>
-                            </div>
-                            <div className="bg-emerald-50 p-2 rounded border border-emerald-100 shadow-sm">
-                                <p className="text-[9px] text-emerald-600 uppercase font-bold">Total Paid</p>
-                                <p className="text-sm font-black text-slate-800">₱ 0.00</p>
-                            </div>
-                            <div className="bg-rose-50 p-2 rounded border border-rose-100 shadow-sm">
-                                <p className="text-[9px] text-rose-600 uppercase font-bold">Balance</p>
-                                <p className="text-sm font-black text-rose-600">₱ 0.00</p>
-                            </div>
-                        </div>
-
                         <div>
-                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1 mt-4">Arrival Time</label>
+                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Arrival Time</label>
                             <input 
                                 type="datetime-local" 
                                 value={form.arrival_datetime}
@@ -196,7 +188,7 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                             </select>
                         </div>
 
-                        <div className="pt-4 mt-6 border-t border-slate-100">
+                        <div className="pt-2 mt-6 border-t border-slate-100">
                             <button 
                                 type="submit" 
                                 disabled={!patient || isRouting || patient.is_routed}
@@ -229,7 +221,6 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                     <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex flex-col md:flex-row justify-between items-center gap-4 shrink-0">
                         <div className="flex items-center space-x-3">
                             <h3 className="text-lg font-bold text-slate-800">Clearance Tracker</h3>
-                            {/* Live polling indicator */}
                             <span className="flex h-2 w-2 relative" title="Live Sync Active">
                                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal-400 opacity-75"></span>
                                 <span className="relative inline-flex rounded-full h-2 w-2 bg-teal-500"></span>
@@ -261,7 +252,7 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                             </div>
                         ) : (
                             displayQueue.map((tx, idx) => (
-                                <div key={idx} className={`bg-white border border-slate-200 rounded-xl p-4 shadow-sm select-none transition-all duration-300 ${activeTab === 'completed' ? 'opacity-80 border-emerald-200' : 'border-slate-200 hover:shadow-md'}`}>
+                                <div key={idx} className={`bg-white border border-slate-200 rounded-xl p-4 shadow-sm select-none transition-all duration-300 ${activeTab === 'completed' ? 'opacity-90 border-emerald-200' : 'border-slate-200 hover:shadow-md'}`}>
                                     <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-3">
                                         <div>
                                             <h4 className="font-bold text-slate-800 text-lg">
@@ -271,11 +262,18 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                                             <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mt-1">Disposition: {tx.disposition}</p>
                                         </div>
                                         <div className="text-right">
-                                            {tx.overall_status === 'Cleared' ? (
-                                                <span className="inline-flex items-center px-3 py-1.5 rounded-md text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                                                    <svg className="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
-                                                    Fully Cleared
-                                                </span>
+                                            {tx.overall_status === 'Cleared' || tx.overall_status === 'Archived' ? (
+                                                <div className="flex items-center gap-3">
+                                                    <span className="inline-flex items-center px-3 py-1.5 rounded-md text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                                        <svg className="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
+                                                        Fully Cleared
+                                                    </span>
+                                                    {/* SAFE FETCH URL ENCODING FOR THE PRINT ANCHOR */}
+                                                    <a href={`/print-clearance/document?enccode=${encodeURIComponent(tx.enccode)}`} target="_blank" rel="noreferrer" className="inline-flex items-center px-3 py-1.5 rounded-md text-xs font-bold bg-teal-600 text-white hover:bg-teal-700 transition-colors shadow-sm">
+                                                        <svg className="w-3.5 h-3.5 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+                                                        Print F07
+                                                    </a>
+                                                </div>
                                             ) : (
                                                 <span className="inline-flex items-center px-3 py-1.5 rounded-md text-xs font-bold bg-amber-100 text-amber-800 border border-amber-200">
                                                     <svg className="w-3 h-3 mr-1.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
@@ -288,7 +286,6 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                                     {/* DYNAMIC 5-DEPARTMENT STATUS GRID */}
                                     <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
                                         {allDepartments.map((dept, i) => {
-                                            // The Magic: Checks the backend's array of cleared departments!
                                             const isApproved = tx.cleared_departments?.includes(dept);
                                             
                                             return (

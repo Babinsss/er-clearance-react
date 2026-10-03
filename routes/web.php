@@ -6,8 +6,21 @@ use App\Http\Controllers\AdminController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Auth; // <-- ADDED AUTH FACADE
+use Illuminate\Support\Facades\Auth; 
 use Inertia\Inertia;
+
+// --- PUBLIC TV DISPLAY ROUTE ---
+Route::get('/tv-queue', function () {
+    $readyForBilling = \App\Models\ClearanceTransaction::where('overall_status', 'Cleared')
+        ->orderBy('updated_at', 'desc')
+        ->take(8)
+        ->get();
+
+    return Inertia::render('Dashboard/TvDisplay', [
+        'patients' => $readyForBilling
+    ]);
+})->name('tv.queue');
+
 
 Route::middleware(['auth', 'verified'])->group(function () {
     
@@ -25,19 +38,21 @@ Route::middleware(['auth', 'verified'])->group(function () {
                 ->orderBy('updated_at', 'desc')
                 ->get();
 
+            $archivedPatients = \App\Models\ClearanceTransaction::where('overall_status', 'Archived')
+                ->orderBy('updated_at', 'desc')
+                ->take(50) 
+                ->get();
+
             return Inertia::render('Dashboard/Billing', [
-                'clearedPatients' => $clearedPatients
+                'clearedPatients' => $clearedPatients,
+                'archivedPatients' => $archivedPatients
             ]);
         }
 
         // --- 2. LIVE COST CENTER QUEUE LOGIC ---
-        // Dynamically check if the user's department is categorized as a 'Cost Center' in the database
         $deptRecord = \App\Models\Department::where('name', $user->department)->first();
-        
-        // Safety fallback array (now includes 'Cardio Pulmo')
         $costCenters = ['Laboratory', 'Radiology', 'Pharmacy', 'Cardiopulmonary', 'CSR', 'Cardio Pulmo'];
 
-        // Trigger if the database category is 'Cost Center' OR if the name is in the fallback array
         if (($deptRecord && $deptRecord->category === 'Cost Center') || in_array($user->department, $costCenters)) {
             
             $myClearedLogs = \App\Models\ClearanceLog::where('department', $user->department)
@@ -90,11 +105,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ->orderBy('updated_at', 'desc')
             ->get();
 
-        // Fetch all clearance logs for the active queue
         $enccodes = $wardTransactions->pluck('enccode')->toArray();
         $allLogs = \App\Models\ClearanceLog::whereIn('enccode', $enccodes)->get()->groupBy('enccode');
 
-        // Attach the cleared departments to each transaction
         $wardTransactions->transform(function($tx) use ($allLogs) {
             $tx->cleared_departments = isset($allLogs[$tx->enccode]) 
                 ? $allLogs[$tx->enccode]->pluck('department')->toArray() 
@@ -148,8 +161,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
         
     })->name('dashboard');
 
-   // --- ADMIN ROUTES ---
+    // --- ADMIN ROUTES ---
     Route::get('/admin', [AdminController::class, 'index'])->name('admin.index');
+    Route::get('/admin/analytics', [AdminController::class, 'getAnalytics'])->name('admin.analytics');
     Route::put('/admin/users/{id}', [AdminController::class, 'updateUser'])->name('admin.users.update');
     Route::delete('/admin/users/{id}', [AdminController::class, 'deleteUser'])->name('admin.users.destroy');
     
@@ -159,11 +173,27 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
     // --- CLEARANCE ROUTES ---
     Route::post('/transactions', [ClearanceController::class, 'storeTransaction'])->name('transactions.store');
-    Route::get('/clearance/{enccode}', [ClearanceController::class, 'show'])->name('clearance.show')->where('enccode', '.*');
     Route::post('/clearance', [ClearanceController::class, 'store'])->name('clearance.store');
+    Route::post('/clearance/archive', function (Request $request) {
+        \App\Models\ClearanceTransaction::where('enccode', $request->enccode)->update(['overall_status' => 'Archived']);
+        return back();
+    })->name('clearance.archive');
     
-    // --- PRINT ROUTE ---
-    Route::get('/print-clearance/{enccode}', function ($enccode) {
+    // SAFE FETCH ROUTE (Bypasses Apache Slash Blocking)
+    Route::get('/clearance-data/fetch', function (Request $request) {
+        // 1. Grab the heavily-slashed iHomis code from the safe URL parameter
+        $enccode = $request->query('enccode');
+        
+        // 2. Properly instantiate the controller so PHP doesn't complain about static calls
+        $controller = app(\App\Http\Controllers\ClearanceController::class);
+        
+        // 3. Pass both the Request object and the string exactly as the controller expects
+        return $controller->show($request, $enccode);
+    })->name('clearance.show.safe');
+    
+    // --- SAFE PRINT ROUTE ---
+    Route::get('/print-clearance/document', function (Request $request) {
+        $enccode = $request->query('enccode');
         $transaction = \App\Models\ClearanceTransaction::where('enccode', $enccode)->firstOrFail();
         
         $logs = \App\Models\ClearanceLog::where('enccode', $enccode)
@@ -175,7 +205,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
             'transaction' => $transaction,
             'logs' => $logs
         ]);
-    })->name('clearance.print')->where('enccode', '.*');
+    })->name('clearance.print');
 
 }); 
 

@@ -8,14 +8,12 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
     const [activeModule, setActiveModule] = useState('pending'); 
     const [soundEnabled, setSoundEnabled] = useState(true);
     
-    // --- MODAL & NOTIFICATION STATE VARIABLES ---
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isLoadingData, setIsLoadingData] = useState(false);
     const [modalData, setModalData] = useState(null);
     const [activeEnccode, setActiveEnccode] = useState(null);
     const [toastMessage, setToastMessage] = useState(null); 
     
-    // --- NEW: CUSTOM CONFIRMATION STATE ---
     const [isConfirmOpen, setIsConfirmOpen] = useState(false);
     const [isClearing, setIsClearing] = useState(false);
 
@@ -28,7 +26,6 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
         patient.enccode.includes(searchTerm)
     );
 
-    // --- SMART WAIT TIME FORMATTER ---
     const formatWaitTime = (minutes) => {
         if (minutes < 60) return `${minutes} min`;
         const h = Math.floor(minutes / 60);
@@ -37,6 +34,20 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
     };
 
     useEffect(() => {
+        if (window.Echo) {
+            window.Echo.channel('clearance-updates')
+                .listen('PatientRouted', (e) => {
+                    if (soundEnabled) {
+                        new Audio('/sounds/notif.wav').play().catch(() => {});
+                    }
+                    router.reload({ 
+                        only: ['pendingPatients', 'historyPatients'], 
+                        preserveScroll: true, 
+                        preserveState: true 
+                    });
+                });
+        }
+
         const pollInterval = setInterval(() => {
             router.reload({ 
                 only: ['pendingPatients', 'historyPatients'], 
@@ -56,21 +67,24 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
             });
 
             if (triggeredWarning && soundEnabled) {
-                new Audio('/sounds/epic_26.mp3').play().catch(() => {});
+                new Audio('/sounds/notif.wav').play().catch(() => {});
             }
         }, 5000); 
 
         if (pendingPatients.length > previousQueueCount.current && soundEnabled) {
-            new Audio('/sounds/epic_26.mp3').play().catch(() => {});
+            new Audio('/sounds/notif.wav').play().catch(() => {});
         }
         
         previousQueueCount.current = pendingPatients.length;
-        return () => clearInterval(pollInterval);
+
+        return () => {
+            clearInterval(pollInterval);
+            if (window.Echo) window.Echo.leaveChannel('clearance-updates');
+        };
     }, [pendingPatients, department, soundEnabled]);
 
     const getWaitMinutes = (dateString) => Math.floor((Date.now() - new Date(dateString).getTime()) / (1000 * 60));
 
-    // --- FETCH JSON DATA AND OPEN MODAL ---
     const openInspectModal = async (enccode) => {
         setIsModalOpen(true);
         setIsLoadingData(true);
@@ -78,7 +92,8 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
         setModalData(null);
         
         try {
-            const response = await axios.get(`/clearance/${enccode}`, {
+            // SAFE FETCH USING QUERY PARAMETERS
+            const response = await axios.get(`/clearance-data/fetch?enccode=${encodeURIComponent(enccode)}`, {
                 headers: { 
                     'Accept': 'application/json',
                     'X-Requested-With': 'XMLHttpRequest'
@@ -95,7 +110,6 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
         }
     };
 
-    // --- BULLETPROOF DATA EXTRACTOR ---
     const getActiveOrders = () => {
         if (!modalData) return [];
         
@@ -117,18 +131,13 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
 
     const hasUnservedItems = () => {
         const orders = getActiveOrders();
-        // Only disable the button if an item is NOT Served ('S') AND NOT Partial ('P')
         return orders.some(item => item.status !== 'S' && item.status !== 'P');
     };
 
-    // --- UI-FRIENDLY CLEAR FUNCTIONS ---
-    
-    // 1. Triggers the custom modal instead of browser alert
     const handleClearClick = () => {
         setIsConfirmOpen(true);
     };
 
-    // 2. Executes the actual database clearance
     const executeClearDepartment = () => {
         setIsClearing(true);
         router.post('/clearance', {
@@ -138,8 +147,8 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
             preserveScroll: true,
             onSuccess: () => {
                 setToastMessage(`${department} successfully cleared!`);
-                setIsConfirmOpen(false); // Close confirm modal
-                setIsModalOpen(false);   // Close inspect modal
+                setIsConfirmOpen(false);
+                setIsModalOpen(false);
                 setIsClearing(false);
                 setTimeout(() => setToastMessage(null), 3000);
             },

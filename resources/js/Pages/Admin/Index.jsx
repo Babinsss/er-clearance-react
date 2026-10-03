@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { Head, router } from '@inertiajs/react';
 import PortalLayout from '@/Layouts/PortalLayout';
+import TurnaroundChart from '@/Components/TurnaroundChart'; // <-- IMPORTED CHART
 
 export default function AdminDashboard({ staff, departments = [] }) {
-    const [activeTab, setActiveTab] = useState('staff'); // 'staff' or 'departments'
+    // Default to analytics tab so the chart is the first thing the Admin sees
+    const [activeTab, setActiveTab] = useState('analytics'); 
     const [searchTerm, setSearchTerm] = useState('');
     const [toastMessage, setToastMessage] = useState(null);
     
@@ -114,6 +116,11 @@ export default function AdminDashboard({ staff, departments = [] }) {
                     </div>
 
                     <nav className="relative z-10 space-y-2 flex-1">
+                        <button onClick={() => setActiveTab('analytics')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg text-sm font-bold transition-all ${activeTab === 'analytics' ? 'bg-teal-500/20 text-teal-300 border-l-4 border-teal-400' : 'text-slate-400 hover:bg-slate-800 border-l-4 border-transparent'}`}>
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                            <span>Analytics Overview</span>
+                        </button>
+
                         <button onClick={() => setActiveTab('staff')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg text-sm font-bold transition-all ${activeTab === 'staff' ? 'bg-teal-500/20 text-teal-300 border-l-4 border-teal-400' : 'text-slate-400 hover:bg-slate-800 border-l-4 border-transparent'}`}>
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
                             <span>Staff Accounts</span>
@@ -131,24 +138,26 @@ export default function AdminDashboard({ staff, departments = [] }) {
                     <div className="px-6 py-5 border-b border-slate-200 bg-slate-50 flex flex-col md:flex-row justify-between items-center gap-4 shrink-0">
                         <div>
                             <h3 className="text-lg font-bold text-slate-800">
-                                {activeTab === 'staff' ? 'Staff Access Management' : 'Hospital Departments'}
+                                {activeTab === 'analytics' ? 'Hospital Performance' : (activeTab === 'staff' ? 'Staff Access Management' : 'Hospital Departments')}
                             </h3>
                             <p className="text-xs text-slate-500 font-medium">
-                                {activeTab === 'staff' ? 'View and modify hospital staff roles.' : 'Manage available wards and cost centers.'}
+                                {activeTab === 'analytics' ? 'Monitor live department clearance speeds.' : (activeTab === 'staff' ? 'View and modify hospital staff roles.' : 'Manage available wards and cost centers.')}
                             </p>
                         </div>
                         
                         <div className="flex items-center space-x-4 w-full md:w-auto">
-                            <div className="w-full md:w-64 relative">
-                                <svg className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
-                                <input 
-                                    type="text" 
-                                    value={searchTerm}
-                                    onChange={e => setSearchTerm(e.target.value)}
-                                    className="w-full pl-9 pr-3 py-2 rounded-lg border-slate-300 shadow-sm focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm transition-all" 
-                                    placeholder={`Search ${activeTab}...`}
-                                />
-                            </div>
+                            {activeTab !== 'analytics' && (
+                                <div className="w-full md:w-64 relative">
+                                    <svg className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                                    <input 
+                                        type="text" 
+                                        value={searchTerm}
+                                        onChange={e => setSearchTerm(e.target.value)}
+                                        className="w-full pl-9 pr-3 py-2 rounded-lg border-slate-300 shadow-sm focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm transition-all" 
+                                        placeholder={`Search ${activeTab}...`}
+                                    />
+                                </div>
+                            )}
                             {activeTab === 'departments' && (
                                 <button onClick={() => openDeptModal()} className="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm transition-colors whitespace-nowrap flex items-center space-x-1">
                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
@@ -158,61 +167,69 @@ export default function AdminDashboard({ staff, departments = [] }) {
                         </div>
                     </div>
 
-                    <div className="overflow-y-auto flex-1">
-                        <table className="w-full text-left border-collapse">
-                            <thead className="sticky top-0 bg-white shadow-sm z-10">
-                                {activeTab === 'staff' ? (
-                                    <tr className="text-slate-500 text-[11px] font-bold uppercase tracking-wider border-b border-slate-200 bg-slate-50">
-                                        <th className="p-4 pl-6">Staff Name</th>
-                                        <th className="p-4">Email Address</th>
-                                        <th className="p-4">Assigned Department</th>
-                                        <th className="p-4 text-right pr-6">Actions</th>
-                                    </tr>
-                                ) : (
-                                    <tr className="text-slate-500 text-[11px] font-bold uppercase tracking-wider border-b border-slate-200 bg-slate-50">
-                                        <th className="p-4 pl-6">Department Name</th>
-                                        <th className="p-4">Category</th>
-                                        <th className="p-4 text-right pr-6">Actions</th>
-                                    </tr>
-                                )}
-                            </thead>
-                            <tbody className="text-sm divide-y divide-slate-100">
-                                {activeTab === 'staff' ? (
-                                    filteredStaff.map((user) => (
-                                        <tr key={user.id} className="hover:bg-slate-50 transition-colors">
-                                            <td className="p-4 pl-6 font-bold text-slate-800">{user.name}</td>
-                                            <td className="p-4 text-slate-500">{user.email}</td>
-                                            <td className="p-4">
-                                                <span className="bg-slate-100 text-slate-700 text-xs font-bold px-2.5 py-1 rounded border border-slate-200">{user.department}</span>
-                                            </td>
-                                            <td className="p-4 pr-6 text-right">
-                                                <button onClick={() => openEditModal(user)} className="text-teal-600 hover:text-teal-800 font-bold text-xs mr-4 transition-colors">EDIT</button>
-                                                <button onClick={() => handleDeleteUser(user.id, user.name)} className="text-rose-500 hover:text-rose-700 font-bold text-xs transition-colors disabled:opacity-50" disabled={user.department === 'ICT / Admin'}>DELETE</button>
-                                            </td>
+                    <div className={`overflow-y-auto flex-1 ${activeTab === 'analytics' ? 'bg-slate-50/50' : 'bg-white'}`}>
+                        {activeTab === 'analytics' ? (
+                            <div className="p-6 md:p-8">
+                                <div className="max-w-3xl mx-auto">
+                                    <TurnaroundChart />
+                                </div>
+                            </div>
+                        ) : (
+                            <table className="w-full text-left border-collapse">
+                                <thead className="sticky top-0 bg-white shadow-sm z-10">
+                                    {activeTab === 'staff' ? (
+                                        <tr className="text-slate-500 text-[11px] font-bold uppercase tracking-wider border-b border-slate-200 bg-slate-50">
+                                            <th className="p-4 pl-6">Staff Name</th>
+                                            <th className="p-4">Email Address</th>
+                                            <th className="p-4">Assigned Department</th>
+                                            <th className="p-4 text-right pr-6">Actions</th>
                                         </tr>
-                                    ))
-                                ) : (
-                                    filteredDepts.length === 0 ? (
-                                        <tr><td colSpan="3" className="p-8 text-center text-slate-500 italic">No departments found. Add one to get started.</td></tr>
                                     ) : (
-                                        filteredDepts.map((dept) => (
-                                            <tr key={dept.id} className="hover:bg-slate-50 transition-colors">
-                                                <td className="p-4 pl-6 font-bold text-slate-800">{dept.name}</td>
+                                        <tr className="text-slate-500 text-[11px] font-bold uppercase tracking-wider border-b border-slate-200 bg-slate-50">
+                                            <th className="p-4 pl-6">Department Name</th>
+                                            <th className="p-4">Category</th>
+                                            <th className="p-4 text-right pr-6">Actions</th>
+                                        </tr>
+                                    )}
+                                </thead>
+                                <tbody className="text-sm divide-y divide-slate-100">
+                                    {activeTab === 'staff' ? (
+                                        filteredStaff.map((user) => (
+                                            <tr key={user.id} className="hover:bg-slate-50 transition-colors">
+                                                <td className="p-4 pl-6 font-bold text-slate-800">{user.name}</td>
+                                                <td className="p-4 text-slate-500">{user.email}</td>
                                                 <td className="p-4">
-                                                    <span className={`text-xs font-bold px-2.5 py-1 rounded border ${dept.category === 'Cost Center' ? 'bg-amber-50 text-amber-700 border-amber-200' : (dept.category === 'Ward' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-slate-100 text-slate-700 border-slate-200')}`}>
-                                                        {dept.category}
-                                                    </span>
+                                                    <span className="bg-slate-100 text-slate-700 text-xs font-bold px-2.5 py-1 rounded border border-slate-200">{user.department}</span>
                                                 </td>
                                                 <td className="p-4 pr-6 text-right">
-                                                    <button onClick={() => openDeptModal(dept)} className="text-teal-600 hover:text-teal-800 font-bold text-xs mr-4 transition-colors">EDIT</button>
-                                                    <button onClick={() => handleDeleteDepartment(dept.id, dept.name)} className="text-rose-500 hover:text-rose-700 font-bold text-xs transition-colors">DELETE</button>
+                                                    <button onClick={() => openEditModal(user)} className="text-teal-600 hover:text-teal-800 font-bold text-xs mr-4 transition-colors">EDIT</button>
+                                                    <button onClick={() => handleDeleteUser(user.id, user.name)} className="text-rose-500 hover:text-rose-700 font-bold text-xs transition-colors disabled:opacity-50" disabled={user.department === 'ICT / Admin'}>DELETE</button>
                                                 </td>
                                             </tr>
                                         ))
-                                    )
-                                )}
-                            </tbody>
-                        </table>
+                                    ) : (
+                                        filteredDepts.length === 0 ? (
+                                            <tr><td colSpan="3" className="p-8 text-center text-slate-500 italic">No departments found. Add one to get started.</td></tr>
+                                        ) : (
+                                            filteredDepts.map((dept) => (
+                                                <tr key={dept.id} className="hover:bg-slate-50 transition-colors">
+                                                    <td className="p-4 pl-6 font-bold text-slate-800">{dept.name}</td>
+                                                    <td className="p-4">
+                                                        <span className={`text-xs font-bold px-2.5 py-1 rounded border ${dept.category === 'Cost Center' ? 'bg-amber-50 text-amber-700 border-amber-200' : (dept.category === 'Ward' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-slate-100 text-slate-700 border-slate-200')}`}>
+                                                            {dept.category}
+                                                        </span>
+                                                    </td>
+                                                    <td className="p-4 pr-6 text-right">
+                                                        <button onClick={() => openDeptModal(dept)} className="text-teal-600 hover:text-teal-800 font-bold text-xs mr-4 transition-colors">EDIT</button>
+                                                        <button onClick={() => handleDeleteDepartment(dept.id, dept.name)} className="text-rose-500 hover:text-rose-700 font-bold text-xs transition-colors">DELETE</button>
+                                                    </td>
+                                                </tr>
+                                            ))
+                                        )
+                                    )}
+                                </tbody>
+                            </table>
+                        )}
                     </div>
                 </div>
             </div>
