@@ -20,6 +20,19 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
         disposition: patient?.disposition || '',
     });
 
+    // DYNAMIC DEPARTMENT GENERATOR (Bulletproofed Naming)
+    const getRequiredDepartments = (wardStr) => {
+        const base = ['Pharmacy', 'Laboratory', 'Radiology', 'Cardio Pulmo', 'CSR'];
+        
+        if (['Ortho Ward', 'Ortho', 'Surgical Ward', 'Surgical', 'OB Ward', 'OB'].includes(wardStr)) {
+            return [...base, 'OR/LR/DR']; // <-- Added slashes here!
+        }
+        if (['Dialysis Unit', 'Dialysis'].includes(wardStr)) {
+            return [...base, 'CKD'];
+        }
+        return base;
+    };
+
     useEffect(() => {
         if (window.Echo) {
             window.Echo.channel('clearance-updates')
@@ -107,7 +120,6 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
     };
 
     const displayQueue = activeTab === 'active' ? activeQueue : clearedQueue;
-    const allDepartments = ['Pharmacy', 'Laboratory', 'Radiology', 'Cardio Pulmo', 'CSR'];
 
     return (
         <PortalLayout>
@@ -251,66 +263,71 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                                 <p className="text-sm font-medium text-slate-400">No {activeTab} clearances for {wardName}.</p>
                             </div>
                         ) : (
-                            displayQueue.map((tx, idx) => (
-                                <div key={idx} className={`bg-white border border-slate-200 rounded-xl p-4 shadow-sm select-none transition-all duration-300 ${activeTab === 'completed' ? 'opacity-90 border-emerald-200' : 'border-slate-200 hover:shadow-md'}`}>
-                                    <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-3">
-                                        <div>
-                                            <h4 className="font-bold text-slate-800 text-lg">
-                                                {tx.patient_name}
-                                                <span className="text-xs text-slate-400 font-mono ml-2 border border-slate-200 px-2 py-0.5 rounded bg-slate-50">{tx.hospital_number}</span>
-                                            </h4>
-                                            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mt-1">Disposition: {tx.disposition}</p>
-                                        </div>
-                                        <div className="text-right">
-                                            {tx.overall_status === 'Cleared' || tx.overall_status === 'Archived' ? (
-                                                <div className="flex items-center gap-3">
-                                                    <span className="inline-flex items-center px-3 py-1.5 rounded-md text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                                                        <svg className="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
-                                                        Fully Cleared
-                                                    </span>
-                                                    {/* SAFE FETCH URL ENCODING FOR THE PRINT ANCHOR */}
-                                                    <a href={`/print-clearance/document?enccode=${encodeURIComponent(tx.enccode)}`} target="_blank" rel="noreferrer" className="inline-flex items-center px-3 py-1.5 rounded-md text-xs font-bold bg-teal-600 text-white hover:bg-teal-700 transition-colors shadow-sm">
-                                                        <svg className="w-3.5 h-3.5 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
-                                                        Print F07
-                                                    </a>
-                                                </div>
-                                            ) : (
-                                                <span className="inline-flex items-center px-3 py-1.5 rounded-md text-xs font-bold bg-amber-100 text-amber-800 border border-amber-200">
-                                                    <svg className="w-3 h-3 mr-1.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                                                    Routing in Progress
-                                                </span>
-                                            )}
-                                        </div>
-                                    </div>
+                            displayQueue.map((tx, idx) => {
+                                // Dynamically calculate the departments needed for this specific transaction
+                                const requiredDepts = getRequiredDepartments(tx.room_ward);
+                                const gridColsClass = requiredDepts.length === 6 ? 'md:grid-cols-6' : 'md:grid-cols-5';
 
-                                    {/* DYNAMIC 5-DEPARTMENT STATUS GRID */}
-                                    <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-                                        {allDepartments.map((dept, i) => {
-                                            const isApproved = tx.cleared_departments?.includes(dept);
-                                            
-                                            return (
-                                                <div key={i} className={`border rounded-lg p-2.5 text-center cursor-default transition-all duration-500 ${isApproved ? 'bg-emerald-50 border-emerald-300 shadow-sm' : 'bg-slate-50 border-slate-200'}`}>
-                                                    <div className={`text-[10px] font-black uppercase mb-1 truncate transition-colors ${isApproved ? 'text-emerald-700' : 'text-slate-500'}`}>
-                                                        {dept}
+                                return (
+                                    <div key={idx} className={`bg-white border border-slate-200 rounded-xl p-4 shadow-sm select-none transition-all duration-300 ${activeTab === 'completed' ? 'opacity-90 border-emerald-200' : 'border-slate-200 hover:shadow-md'}`}>
+                                        <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-3">
+                                            <div>
+                                                <h4 className="font-bold text-slate-800 text-lg">
+                                                    {tx.patient_name}
+                                                    <span className="text-xs text-slate-400 font-mono ml-2 border border-slate-200 px-2 py-0.5 rounded bg-slate-50">{tx.hospital_number}</span>
+                                                </h4>
+                                                <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mt-1">Disposition: {tx.disposition}</p>
+                                            </div>
+                                            <div className="text-right">
+                                                {tx.overall_status === 'Cleared' || tx.overall_status === 'Archived' ? (
+                                                    <div className="flex items-center gap-3">
+                                                        <span className="inline-flex items-center px-3 py-1.5 rounded-md text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                                            <svg className="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
+                                                            Fully Cleared
+                                                        </span>
+                                                        <a href={`/print-clearance/document?enccode=${encodeURIComponent(tx.enccode)}`} target="_blank" rel="noreferrer" className="inline-flex items-center px-3 py-1.5 rounded-md text-xs font-bold bg-teal-600 text-white hover:bg-teal-700 transition-colors shadow-sm">
+                                                            <svg className="w-3.5 h-3.5 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+                                                            Print F07
+                                                        </a>
                                                     </div>
-                                                    
-                                                    {isApproved ? (
-                                                        <span className="text-emerald-600 text-xs font-bold flex items-center justify-center space-x-1">
-                                                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
-                                                            <span>Cleared</span>
-                                                        </span>
-                                                    ) : (
-                                                        <span className="text-amber-500 text-xs font-bold flex items-center justify-center space-x-1">
-                                                            <svg className="w-3 h-3 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                                                            <span>Pending</span>
-                                                        </span>
-                                                    )}
-                                                </div>
-                                            )
-                                        })}
+                                                ) : (
+                                                    <span className="inline-flex items-center px-3 py-1.5 rounded-md text-xs font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                                                        <svg className="w-3 h-3 mr-1.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                                        Routing in Progress
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* THE DYNAMIC STATUS GRID */}
+                                        <div className={`grid grid-cols-2 ${gridColsClass} gap-2`}>
+                                            {requiredDepts.map((dept, i) => {
+                                                const isApproved = tx.cleared_departments?.includes(dept);
+                                                
+                                                return (
+                                                    <div key={i} className={`border rounded-lg p-2.5 text-center cursor-default transition-all duration-500 ${isApproved ? 'bg-emerald-50 border-emerald-300 shadow-sm' : 'bg-slate-50 border-slate-200'}`}>
+                                                        <div className={`text-[10px] font-black uppercase mb-1 truncate transition-colors ${isApproved ? 'text-emerald-700' : 'text-slate-500'}`}>
+                                                            {dept}
+                                                        </div>
+                                                        
+                                                        {isApproved ? (
+                                                            <span className="text-emerald-600 text-xs font-bold flex items-center justify-center space-x-1">
+                                                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
+                                                                <span>Cleared</span>
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-amber-500 text-xs font-bold flex items-center justify-center space-x-1">
+                                                                <svg className="w-3 h-3 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                                                <span>Pending</span>
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                )
+                                            })}
+                                        </div>
                                     </div>
-                                </div>
-                            ))
+                                )
+                            })
                         )}
                     </div>
                 </div>

@@ -27,8 +27,25 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
         ? new Date(transaction.created_at).toLocaleTimeString('en-US', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit' })
         : '';
 
-    const fixedDepartments = ['CSR', 'Radiology', 'Laboratory', 'Pharmacy', 'Cardio Pulmo'];
+    // DYNAMIC PAPER LAYOUT GENERATOR
+    const getPrintDepartments = () => {
+        const base = ['CSR', 'Radiology', 'Laboratory', 'Pharmacy', 'Cardio Pulmo'];
+        const wardStr = transaction?.room_ward || '';
+        
+        if (['Ortho Ward', 'Ortho', 'Surgical Ward', 'Surgical', 'OB Ward', 'OB'].includes(wardStr)) {
+            return [...base, 'OR/LR/DR'];
+        }
+        if (['Dialysis Unit', 'Dialysis'].includes(wardStr)) {
+            return [...base, 'CKD'];
+        }
+        return base;
+    };
+
+    const printDepartments = getPrintDepartments();
     const dispositions = ['Improved', 'HAMA', 'Transferred', 'Died', 'Absconded'];
+    
+    // Auto-compress rows if there are 6 departments so it doesn't bleed onto a second page
+    const rowClass = printDepartments.length > 5 ? 'h-9 py-1' : 'h-11 py-2.5';
 
     return (
         <div className="bg-slate-200 print:bg-white min-h-screen font-serif text-black flex flex-col items-center p-4 print:p-0">
@@ -158,25 +175,23 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
                                 </tr>
                             </thead>
                             <tbody className="text-[11px]">
-                                {fixedDepartments.map((deptName, idx) => {
+                                {printDepartments.map((deptName, idx) => {
                                     const sig = getSignatory(deptName);
                                     return (
-                                        <tr key={idx} className="border-b border-black h-11">
-                                            <td className="border-r border-black py-2.5 text-left px-2 font-bold leading-tight uppercase tracking-wider">{deptName}</td>
+                                        <tr key={idx} className={`border-b border-black ${rowClass}`}>
+                                            <td className="border-r border-black text-left px-2 font-bold leading-tight uppercase tracking-wider">{deptName}</td>
                                             
                                             {sig ? (
                                                 <>
-                                                    <td className="border-r border-black py-2.5 font-sans font-bold text-[10px] uppercase tracking-wide">{sig.name}</td>
-                                                    {/* Time Received (When Ward routed it) */}
-                                                    <td className="border-r border-black py-2.5 font-sans font-semibold text-[10px]">{timeReceived}</td>
-                                                    {/* Time Released (When Cost Center cleared it) */}
-                                                    <td className="py-2.5 font-sans font-semibold text-[10px]">{sig.time}</td>
+                                                    <td className="border-r border-black font-sans font-bold text-[10px] uppercase tracking-wide">{sig.name}</td>
+                                                    <td className="border-r border-black font-sans font-semibold text-[10px]">{timeReceived}</td>
+                                                    <td className="font-sans font-semibold text-[10px]">{sig.time}</td>
                                                 </>
                                             ) : (
                                                 <>
-                                                    <td className="border-r border-black py-2.5 h-8"></td>
-                                                    <td className="border-r border-black py-2.5"></td>
-                                                    <td className="py-2.5"></td>
+                                                    <td className="border-r border-black"></td>
+                                                    <td className="border-r border-black"></td>
+                                                    <td></td>
                                                 </>
                                             )}
                                         </tr>
@@ -186,7 +201,7 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
                         </table>
                     </div>
 
-                    <div className="px-4 pb-3 mt-6">
+                    <div className="px-4 pb-3 mt-4">
                         <div className="flex justify-end mb-4">
                             <div className="w-[50%]">
                                 <table className="w-full">
@@ -199,7 +214,7 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
                                         </tr>
                                         <tr>
                                             <td></td>
-                                            <td className="text-center italic text-[11px] pt-1 pb-6">Billing and Claims Clerk</td>
+                                            <td className="text-center italic text-[11px] pt-1 pb-4">Billing and Claims Clerk</td>
                                         </tr>
                                         <tr>
                                             <td className="whitespace-nowrap text-[12px] pr-2 align-bottom pb-1">Time Received:</td>

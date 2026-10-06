@@ -9,9 +9,10 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth; 
 use Inertia\Inertia;
 
-// --- PUBLIC TV DISPLAY ROUTE ---
+// --- PUBLIC TV DISPLAY ROUTE (ER ONLY) ---
 Route::get('/tv-queue', function () {
     $readyForBilling = \App\Models\ClearanceTransaction::where('overall_status', 'Cleared')
+        ->where('room_ward', 'Emergency Room') // STRICTLY locked to ER patients only
         ->orderBy('updated_at', 'desc')
         ->take(8)
         ->get();

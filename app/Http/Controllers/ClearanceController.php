@@ -24,20 +24,17 @@ class ClearanceController extends Controller
             $hpercode = $matches[1];
         }
 
-        // 2. Fetch Active Encounters (BULLETPROOFED ER CATCHER)
-        $encounterCodes = [$enccode]; // Guarantee the current encounter is ALWAYS included
+        // 2. Fetch Active Encounters
+        $encounterCodes = [$enccode]; 
 
         if ($hpercode && $currentEncounter && isset($currentEncounter->encdate)) {
             $currentDate = $currentEncounter->encdate;
-
-            // Go back 3 days to catch the ER visit, starting from midnight to be safe
             $historyEncounters = $db->table('henctr')
                 ->where('hpercode', $hpercode)
                 ->where('encdate', '>=', date('Y-m-d 00:00:00', strtotime($currentDate . ' -3 days')))
                 ->pluck('enccode')
                 ->toArray();
                 
-            // Merge them together and remove duplicates!
             $encounterCodes = array_unique(array_merge($encounterCodes, $historyEncounters));
         }
 
@@ -180,14 +177,11 @@ class ClearanceController extends Controller
 
         $csrRegex = '/(SYRINGE|MACROSET|MICROSET|CANNULA|VENFLON|GAUZE|GLOVE|TUBE|PACK|NEEDLE|CATH|PLASTER|COTTON|TAPE|CHERRY|BALL|BANDAGE|DRAPE|LANCET|BLADE|SUTURE|DIAPER|UNDERPAD|MASK|GOWN|WATER|STERILE|POVIDONE|ALCOHOL|DRESSING|NSS|SALINE|D5|LR|RINGER|SET|KIT|SWAB|GEL|PUMP|CAP|LINEN|EUROMED)/';
 
-        // 6A. Sort Doctor's Orders 
         foreach ($docOrders as $item) {
             $computedStatus = trim(strtoupper($item->status ?? 'U'));
             $ordcon = trim(strtoupper($item->ordcon ?? ''));
             $orderupd = trim(strtoupper($item->orderupd ?? ''));
             
-            // CRITICAL FIX: Removed $computedStatus === 'U' from this skip list!
-            // Fresh, unserved ER orders will now successfully flow through!
             if ($computedStatus === 'C' || $computedStatus === 'D' || str_contains($ordcon, 'CAN') || str_contains($orderupd, 'CAN') || $orderupd === 'INACT' || str_contains(strtoupper($item->item_description), 'CANCEL')) {
                 continue;
             }
@@ -206,7 +200,6 @@ class ClearanceController extends Controller
             $baseName = trim(preg_replace('/\s*\([^)]*\)$/', '', $desc));
             $forcePharma = str_contains($desc, 'PHILRX') || str_contains($desc, 'SODIUM CHLORIDE');
             
-            // Look for Cardio and Radio first
             $isRadio = str_starts_with($code, 'RAD') || preg_match('/(X-?RAY|UTZ|ULTRASOUND|CT|MRI|SCAN|SONOGRAM|RADIOGRAPH|MAMMO|ABDOMEN, WHOLE)/', $desc);
             $isCardio = str_starts_with($code, 'CAR') || $code === 'ECG' || str_contains($desc, 'ECG');
 
@@ -223,7 +216,6 @@ class ClearanceController extends Controller
             } 
         }
 
-        // 6B. Sort Pharmacy Orders
         foreach ($rxOrders as $item) {
             $computedStatus = trim(strtoupper($item->status ?? 'U'));
             $rxostatus = trim(strtoupper($item->rxostatus ?? '')); 
@@ -273,7 +265,6 @@ class ClearanceController extends Controller
             }
         }
 
-        // 6C. Sort Patient Charges
         foreach ($chargeOrders as $item) {
             $category = trim($item->category ?? '');
             $upperCategory = strtoupper($category);
@@ -316,7 +307,6 @@ class ClearanceController extends Controller
             }
         }
 
-        // 7. Clean up arrays
         $csrOrders = collect($csrOrders)->values()->all();
         $pharmacyOrders = collect($pharmacyOrders)->values()->all(); 
         
@@ -365,13 +355,38 @@ class ClearanceController extends Controller
             'user_id' => $request->user()->id, 
         ]);
 
-        $clearedCount = ClearanceLog::where('enccode', $request->enccode)
-            ->distinct('department')
-            ->count('department');
+        // DYNAMIC REQUIRED DEPARTMENTS LOGIC
+        $transaction = ClearanceTransaction::where('enccode', $request->enccode)->first();
+        
+        if ($transaction) {
+            // The core 5 required for everybody
+            $requiredDepartments = ['Pharmacy', 'Laboratory', 'Radiology', 'Cardio Pulmo', 'CSR'];
+            
+            // Conditional 6th Department based on the routing Ward
+            if (in_array($transaction->room_ward, ['Ortho Ward', 'Ortho', 'Surgical Ward', 'Surgical', 'OB Ward', 'OB'])) {
+                $requiredDepartments[] = 'OR/LR/DR';
+            } elseif (in_array($transaction->room_ward, ['Dialysis Unit', 'Dialysis'])) {
+                $requiredDepartments[] = 'CKD';
+            }
 
-        if ($clearedCount >= 5) {
-            ClearanceTransaction::where('enccode', $request->enccode)
-                ->update(['overall_status' => 'Cleared']);
+            // Get all unique departments that have actually signed off (converted to uppercase for safe matching)
+            $clearedDepartments = ClearanceLog::where('enccode', $request->enccode)
+                ->pluck('department')
+                ->map(fn($d) => strtoupper(trim($d)))
+                ->toArray();
+            
+            // Convert required to uppercase for safe matching
+            $safeRequired = array_map(fn($d) => strtoupper(trim($d)), $requiredDepartments);
+
+            // Check if any required departments are missing from the cleared list
+            // array_diff(A, B) returns elements in A that are NOT in B.
+            // So, "What required departments are NOT in the cleared list?"
+            $missing = array_diff($safeRequired, $clearedDepartments);
+
+            // If the missing array is completely empty, they have met all requirements!
+            if (empty($missing)) {
+                $transaction->update(['overall_status' => 'Cleared']);
+            }
         }
 
         return back();
