@@ -11,7 +11,6 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
         }, 800); 
     }, []);
 
-    // Gets the exact time the Cost Center clicked "Clear" (Time Released)
     const getSignatory = (deptName) => {
         const searchDept = deptName.replace(' Unit', '').toLowerCase();
         const log = logs.find(l => (l.department || '').toLowerCase().includes(searchDept));
@@ -22,12 +21,10 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
         } : null;
     };
 
-    // Formats the exact time the Ward initiated the routing (Time Received)
     const timeReceived = transaction?.created_at 
         ? new Date(transaction.created_at).toLocaleTimeString('en-US', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit' })
         : '';
 
-    // DYNAMIC PAPER LAYOUT GENERATOR
     const getPrintDepartments = () => {
         const base = ['CSR', 'Radiology', 'Laboratory', 'Pharmacy', 'Cardio Pulmo'];
         const wardStr = transaction?.room_ward || '';
@@ -43,9 +40,12 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
 
     const printDepartments = getPrintDepartments();
     const dispositions = ['Improved', 'HAMA', 'Transferred', 'Died', 'Absconded'];
-    
-    // Auto-compress rows if there are 6 departments so it doesn't bleed onto a second page
     const rowClass = printDepartments.length > 5 ? 'h-9 py-1' : 'h-11 py-2.5';
+
+    // STAMP LOGIC
+    const isOecb = Boolean(transaction?.is_oecb);
+    const stampColor = isOecb ? '#e11d48' : '#64748b'; // Rose red for OECB, Slate gray for Non-OECB
+    const stampText = isOecb ? 'OECB PATIENT' : 'NON-OECB';
 
     return (
         <div className="bg-slate-200 print:bg-white min-h-screen font-serif text-black flex flex-col items-center p-4 print:p-0">
@@ -61,9 +61,7 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
                         margin: 0; 
                         padding: 0; 
                     }
-                    * {
-                        box-shadow: none !important;
-                    }
+                    * { box-shadow: none !important; }
                     .no-print { display: none !important; }
                 }
             `}} />
@@ -84,9 +82,6 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
                     <div className="flex border-b border-black h-16 shrink-0">
                         <div className="w-[15%] border-r border-black flex justify-center items-center p-1 relative">
                             <img src="/images/capiz.jpg" alt="Capiz Logo" className="h-14 w-14 object-contain" onError={(e) => { e.target.style.display='none'; e.target.nextElementSibling.style.display='flex'; }} />
-                            <div className="w-12 h-12 rounded-full border border-black hidden items-center justify-center text-center absolute">
-                                <span className="text-[7px]">PROVINCE<br/>OF CAPIZ</span>
-                            </div>
                         </div>
                         <div className="w-[60%] flex flex-col">
                             <div className="h-2/3 border-b border-black relative flex items-center justify-center">
@@ -104,9 +99,6 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
                             </div>
                             <div className="w-[55%] flex justify-center items-center p-1 relative">
                                 <img src="/images/rmph.jpg" alt="RMPH Logo" className="h-12 w-12 object-contain" onError={(e) => { e.target.style.display='none'; e.target.nextElementSibling.style.display='flex'; }} />
-                                <div className="w-10 h-10 rounded-full border border-black hidden items-center justify-center text-center leading-tight absolute">
-                                    <span className="text-[6px] font-bold">PHILHEALTH<br/>ACCREDITED</span>
-                                </div>
                             </div>
                         </div>
                     </div>
@@ -118,7 +110,24 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
                         </span>
                     </div>
 
-                    <div className="px-3 pb-2 border-b border-black shrink-0">
+                    <div className="px-3 pb-2 border-b border-black shrink-0 relative">
+                        
+                        {/* --- OECB STAMP OVERLAY --- */}
+                        <div 
+                            className="absolute z-10 font-black text-xl uppercase tracking-widest px-3 py-0.5 transform -rotate-12 rounded-sm shadow-sm"
+                            style={{ 
+                                top: '5px', 
+                                right: '12%', 
+                                border: `3px solid ${stampColor}`, 
+                                color: stampColor,
+                                backgroundColor: 'rgba(255, 255, 255, 0.85)',
+                                WebkitPrintColorAdjust: 'exact',
+                                printColorAdjust: 'exact'
+                            }}
+                        >
+                            {stampText}
+                        </div>
+
                         <div className="flex items-end mb-3 gap-4">
                             <div className="flex flex-1 items-end">
                                 <span className="mr-2 whitespace-nowrap text-[12px]">Name of Patient:</span>
@@ -202,13 +211,38 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
                     </div>
 
                     <div className="px-4 pb-3 mt-4">
-                        <div className="flex justify-end mb-4">
-                            <div className="w-[50%]">
+                        <div className="flex justify-between mb-4">
+                            {/* LEFT SIDE: ROUTED BY NURSE */}
+                            <div className="w-[45%]">
+                                <table className="w-full">
+                                    <tbody>
+                                        <tr>
+                                            <td className="whitespace-nowrap text-[12px] pr-2 align-bottom pb-1 w-[1%]">Routed by:</td>
+                                            <td className="border-b border-black align-bottom w-auto text-center font-bold uppercase tracking-wide text-[12px] px-2 text-slate-800">
+                                                {transaction?.encoded_by || ''}
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td></td>
+                                            <td className="text-center italic text-[11px] pt-1 pb-4">Ward / ER Nurse</td>
+                                        </tr>
+                                        <tr>
+                                            <td className="whitespace-nowrap text-[12px] pr-2 align-bottom pb-1">Time Routed:</td>
+                                            <td className="border-b border-black align-bottom w-auto text-center font-bold tracking-wide text-[12px]">
+                                                {timeReceived}
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {/* RIGHT SIDE: RECEIVED BY BILLING */}
+                            <div className="w-[45%]">
                                 <table className="w-full">
                                     <tbody>
                                         <tr>
                                             <td className="whitespace-nowrap text-[12px] pr-2 align-bottom pb-1 w-[1%]">Received by:</td>
-                                            <td className="border-b border-black align-bottom w-auto text-center font-bold uppercase tracking-wide text-[12px] px-2">
+                                            <td className="border-b border-black align-bottom w-auto text-center font-bold uppercase tracking-wide text-[12px] px-2 text-slate-800">
                                                 {auth?.user?.department === 'Billing & Claims' ? auth?.user?.name : ''}
                                             </td>
                                         </tr>

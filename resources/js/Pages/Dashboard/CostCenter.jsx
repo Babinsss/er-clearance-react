@@ -92,7 +92,6 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
         setModalData(null);
         
         try {
-            // SAFE FETCH USING QUERY PARAMETERS
             const response = await axios.get(`/clearance-data/fetch?enccode=${encodeURIComponent(enccode)}`, {
                 headers: { 
                     'Accept': 'application/json',
@@ -377,6 +376,30 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                                         </button>
                                     </div>
                                     
+                                    {/* --- ER ALERTS BANNER --- */}
+                                    {(Boolean(modalData?.transaction?.is_oecb) || (Boolean(modalData?.transaction?.has_oxygen) && department === 'Cardio Pulmo')) ? (
+                                        <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col gap-2">
+                                            {Boolean(modalData?.transaction?.is_oecb) ? (
+                                                <div className="bg-amber-100 border border-amber-300 text-amber-800 px-3 py-2 rounded-lg text-xs font-bold inline-flex items-center w-fit tracking-wide shadow-sm">
+                                                    <svg className="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                                                    OECB PATIENT
+                                                </div>
+                                            ) : null}
+                                            
+                                            {Boolean(modalData?.transaction?.has_oxygen) && department === 'Cardio Pulmo' ? (
+                                                <div className="bg-sky-50 border border-sky-200 rounded-lg p-3 shadow-sm">
+                                                    <div className="text-[10px] font-black text-sky-700 uppercase tracking-widest mb-1 flex items-center">
+                                                        <svg className="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                                        ER Oxygen Notes
+                                                    </div>
+                                                    <div className="text-sm font-semibold text-sky-900 italic bg-white p-2 border border-sky-100 rounded">
+                                                        "{modalData.transaction.oxygen_remarks || 'No remarks provided.'}"
+                                                    </div>
+                                                </div>
+                                            ) : null}
+                                        </div>
+                                    ) : null}
+
                                     <div className="divide-y divide-slate-100 max-h-[50vh] overflow-y-auto">
                                         {getActiveOrders().length === 0 ? (
                                             <div className="flex flex-col items-center justify-center p-12 text-center bg-slate-50/50">

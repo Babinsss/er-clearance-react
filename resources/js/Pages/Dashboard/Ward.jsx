@@ -10,22 +10,28 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
     const [isRouting, setIsRouting] = useState(false);
     const [isSearching, setIsSearching] = useState(false);
     const [toastMessage, setToastMessage] = useState(null);
+    const [showOxygenModal, setShowOxygenModal] = useState(false);
 
     const previousClearedCount = useRef(clearedQueue.length);
+    
+    // THE BUG FIX: Tracks the current patient so background polling doesn't wipe your typing!
+    const prevPatientCode = useRef(null);
 
     const [form, setForm] = useState({
         hospital_number: searchQuery || '',
         patient_name: patient?.name || '',
         arrival_datetime: patient?.arrival_datetime || '',
         disposition: patient?.disposition || '',
+        is_oecb: '', // Blank by default to force a Yes/No choice
+        has_oxygen: '', 
+        oxygen_remarks: ''
     });
 
-    // DYNAMIC DEPARTMENT GENERATOR (Bulletproofed Naming)
     const getRequiredDepartments = (wardStr) => {
         const base = ['Pharmacy', 'Laboratory', 'Radiology', 'Cardio Pulmo', 'CSR'];
         
         if (['Ortho Ward', 'Ortho', 'Surgical Ward', 'Surgical', 'OB Ward', 'OB'].includes(wardStr)) {
-            return [...base, 'OR/LR/DR']; // <-- Added slashes here!
+            return [...base, 'OR/LR/DR'];
         }
         if (['Dialysis Unit', 'Dialysis'].includes(wardStr)) {
             return [...base, 'CKD'];
@@ -80,33 +86,58 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
         }
     }, [form.hospital_number]);
 
+    // THE BUG FIX: Only reset the form if the actual Patient ID changed
     useEffect(() => {
         if (patient) {
-            setForm(prev => ({
-                ...prev,
-                patient_name: patient.name,
-                arrival_datetime: patient.arrival_datetime || '',
-                disposition: patient.disposition || ''
-            }));
-            setIsSearching(false);
+            if (patient.enccode !== prevPatientCode.current) {
+                setForm(prev => ({
+                    ...prev,
+                    patient_name: patient.name,
+                    arrival_datetime: patient.arrival_datetime || '',
+                    disposition: patient.disposition || '',
+                    is_oecb: '',
+                    has_oxygen: '',
+                    oxygen_remarks: ''
+                }));
+                prevPatientCode.current = patient.enccode;
+                setIsSearching(false);
+            }
+        } else {
+            prevPatientCode.current = null;
         }
     }, [patient]);
+
+    const handleOxygenToggle = (e) => {
+        const val = e.target.value;
+        setForm(prev => ({ ...prev, has_oxygen: val }));
+        
+        if (val === 'Yes') {
+            setShowOxygenModal(true);
+        } else {
+            setForm(prev => ({ ...prev, oxygen_remarks: '' })); 
+        }
+    };
 
     const handleRoutePatient = (e) => {
         e.preventDefault();
         setIsRouting(true);
+        
         router.post('/transactions', {
             enccode: patient?.enccode,
             hospital_number: form.hospital_number,
             patient_name: form.patient_name,
             arrival_datetime: form.arrival_datetime,
             disposition: form.disposition,
-            room_ward: wardName
+            room_ward: wardName,
+            is_oecb: form.is_oecb === 'Yes', // Converts "Yes" to true for the database
+            has_oxygen: form.has_oxygen === 'Yes',
+            oxygen_remarks: form.oxygen_remarks
         }, {
             preserveScroll: true,
             onSuccess: () => {
                 setIsRouting(false);
-                setForm({ hospital_number: '', patient_name: '', arrival_datetime: '', disposition: '' });
+                prevPatientCode.current = null; // Clears the tracker for the next patient
+                setForm({ hospital_number: '', patient_name: '', arrival_datetime: '', disposition: '', is_oecb: '', has_oxygen: '', oxygen_remarks: '' });
                 setToastMessage("Patient successfully routed for clearance!");
                 setTimeout(() => setToastMessage(null), 3000);
             },
@@ -200,6 +231,81 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                             </select>
                         </div>
 
+                        {/* REQUIRED YES/NO RADIO BUTTONS FOR ER */}
+                        {wardName === 'Emergency Room' && (
+                            <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 space-y-4 mt-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">
+                                        Is this an OECB Patient? <span className="text-rose-500 text-sm">*</span>
+                                    </label>
+                                    <div className="flex gap-6">
+                                        <label className="flex items-center space-x-2 cursor-pointer">
+                                            <input 
+                                                type="radio" 
+                                                name="is_oecb" 
+                                                value="Yes" 
+                                                checked={form.is_oecb === 'Yes'} 
+                                                onChange={e => setForm({...form, is_oecb: e.target.value})} 
+                                                className="w-4 h-4 text-teal-600 focus:ring-teal-500 border-slate-300" 
+                                                required 
+                                            />
+                                            <span className="text-sm font-bold text-slate-700 uppercase">Yes</span>
+                                        </label>
+                                        <label className="flex items-center space-x-2 cursor-pointer">
+                                            <input 
+                                                type="radio" 
+                                                name="is_oecb" 
+                                                value="No" 
+                                                checked={form.is_oecb === 'No'} 
+                                                onChange={e => setForm({...form, is_oecb: e.target.value})} 
+                                                className="w-4 h-4 text-teal-600 focus:ring-teal-500 border-slate-300" 
+                                                required 
+                                            />
+                                            <span className="text-sm font-bold text-slate-700 uppercase">No</span>
+                                        </label>
+                                    </div>
+                                </div>
+                                
+                                <div className="pt-3 border-t border-slate-200">
+                                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">
+                                        Has Oxygen Charges? <span className="text-rose-500 text-sm">*</span>
+                                    </label>
+                                    <div className="flex gap-6">
+                                        <label className="flex items-center space-x-2 cursor-pointer">
+                                            <input 
+                                                type="radio" 
+                                                name="has_oxygen" 
+                                                value="Yes" 
+                                                checked={form.has_oxygen === 'Yes'} 
+                                                onChange={handleOxygenToggle} 
+                                                className="w-4 h-4 text-teal-600 focus:ring-teal-500 border-slate-300" 
+                                                required 
+                                            />
+                                            <span className="text-sm font-bold text-slate-700 uppercase">Yes</span>
+                                        </label>
+                                        <label className="flex items-center space-x-2 cursor-pointer">
+                                            <input 
+                                                type="radio" 
+                                                name="has_oxygen" 
+                                                value="No" 
+                                                checked={form.has_oxygen === 'No'} 
+                                                onChange={handleOxygenToggle} 
+                                                className="w-4 h-4 text-teal-600 focus:ring-teal-500 border-slate-300" 
+                                                required 
+                                            />
+                                            <span className="text-sm font-bold text-slate-700 uppercase">No</span>
+                                        </label>
+                                    </div>
+
+                                    {form.has_oxygen === 'Yes' && form.oxygen_remarks && (
+                                        <div className="mt-3 text-xs font-medium text-sky-800 bg-sky-50 p-2.5 rounded border border-sky-200 italic line-clamp-2">
+                                            "{form.oxygen_remarks}"
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
                         <div className="pt-2 mt-6 border-t border-slate-100">
                             <button 
                                 type="submit" 
@@ -264,7 +370,6 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                             </div>
                         ) : (
                             displayQueue.map((tx, idx) => {
-                                // Dynamically calculate the departments needed for this specific transaction
                                 const requiredDepts = getRequiredDepartments(tx.room_ward);
                                 const gridColsClass = requiredDepts.length === 6 ? 'md:grid-cols-6' : 'md:grid-cols-5';
 
@@ -272,9 +377,12 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                                     <div key={idx} className={`bg-white border border-slate-200 rounded-xl p-4 shadow-sm select-none transition-all duration-300 ${activeTab === 'completed' ? 'opacity-90 border-emerald-200' : 'border-slate-200 hover:shadow-md'}`}>
                                         <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-3">
                                             <div>
-                                                <h4 className="font-bold text-slate-800 text-lg">
+                                                <h4 className="font-bold text-slate-800 text-lg flex items-center gap-2">
                                                     {tx.patient_name}
-                                                    <span className="text-xs text-slate-400 font-mono ml-2 border border-slate-200 px-2 py-0.5 rounded bg-slate-50">{tx.hospital_number}</span>
+                                                    {tx.is_oecb && (
+                                                        <span className="bg-amber-100 text-amber-800 text-[9px] font-bold px-2 py-0.5 rounded border border-amber-300">OECB</span>
+                                                    )}
+                                                    <span className="text-xs text-slate-400 font-mono border border-slate-200 px-2 py-0.5 rounded bg-slate-50">{tx.hospital_number}</span>
                                                 </h4>
                                                 <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mt-1">Disposition: {tx.disposition}</p>
                                             </div>
@@ -299,7 +407,6 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                                             </div>
                                         </div>
 
-                                        {/* THE DYNAMIC STATUS GRID */}
                                         <div className={`grid grid-cols-2 ${gridColsClass} gap-2`}>
                                             {requiredDepts.map((dept, i) => {
                                                 const isApproved = tx.cleared_departments?.includes(dept);
@@ -333,7 +440,46 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                 </div>
             </div>
 
-            {/* --- SLIDING TOAST NOTIFICATION --- */}
+            {/* OXYGEN MODAL WITH "type=button" FIX */}
+            {showOxygenModal && (
+                <div className="fixed inset-0 z-[400] flex items-center justify-center bg-slate-900/70 backdrop-blur-sm p-4">
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in duration-200">
+                        <div className="px-6 py-4 border-b border-slate-200 bg-slate-50">
+                            <h3 className="text-lg font-bold text-slate-800">Oxygen Remarks</h3>
+                        </div>
+                        <div className="p-6">
+                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">
+                                Provide notes for Cardio Pulmo
+                            </label>
+                            <textarea
+                                rows="4"
+                                value={form.oxygen_remarks}
+                                onChange={e => setForm({...form, oxygen_remarks: e.target.value})}
+                                placeholder="e.g., Used 1 tank for 4 hours..."
+                                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 resize-none"
+                                autoFocus
+                            ></textarea>
+                            <div className="mt-4 flex justify-end gap-3">
+                                <button 
+                                    type="button" // Fixes the bug where clicking cancel accidentally submitted the whole form!
+                                    onClick={() => { setForm({...form, has_oxygen: 'No', oxygen_remarks: ''}); setShowOxygenModal(false); }}
+                                    className="px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button 
+                                    type="button" // Fixes accidental form submission
+                                    onClick={() => setShowOxygenModal(false)}
+                                    className="px-4 py-2 text-sm font-bold bg-teal-600 text-white hover:bg-teal-700 rounded-lg shadow-sm transition-colors"
+                                >
+                                    Save Notes
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {toastMessage && (
                 <div className="fixed top-6 right-6 z-[200] flex items-center bg-teal-600 text-white px-5 py-3.5 rounded-xl shadow-2xl animate-in slide-in-from-top-5 fade-in duration-300">
                     <div className="bg-teal-500 rounded-full p-1 mr-3">

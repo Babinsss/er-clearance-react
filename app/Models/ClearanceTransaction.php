@@ -17,5 +17,9 @@ class ClearanceTransaction extends Model
         'arrival_datetime',
         'disposition',
         'overall_status',
+        'is_oecb',
+        'has_oxygen',
+        'oxygen_remarks',
+        'encoded_by',
     ];
 }

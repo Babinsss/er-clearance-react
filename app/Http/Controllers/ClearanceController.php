@@ -321,6 +321,7 @@ class ClearanceController extends Controller
         if ($request->wantsJson() || $request->ajax()) {
             return response()->json([
                 'enccode' => $enccode,
+                'transaction' => $transaction,
                 'labOrders' => $labOrders,
                 'radioOrders' => $radioOrders,
                 'cardioOrders' => $cardioOrders,
@@ -332,6 +333,7 @@ class ClearanceController extends Controller
 
         return inertia('Clearance/Index', [
             'enccode' => $enccode,
+            'transaction' => $transaction,
             'labOrders' => $labOrders,
             'radioOrders' => $radioOrders,
             'cardioOrders' => $cardioOrders,
@@ -355,35 +357,25 @@ class ClearanceController extends Controller
             'user_id' => $request->user()->id, 
         ]);
 
-        // DYNAMIC REQUIRED DEPARTMENTS LOGIC
         $transaction = ClearanceTransaction::where('enccode', $request->enccode)->first();
         
         if ($transaction) {
-            // The core 5 required for everybody
             $requiredDepartments = ['Pharmacy', 'Laboratory', 'Radiology', 'Cardio Pulmo', 'CSR'];
             
-            // Conditional 6th Department based on the routing Ward
             if (in_array($transaction->room_ward, ['Ortho Ward', 'Ortho', 'Surgical Ward', 'Surgical', 'OB Ward', 'OB'])) {
                 $requiredDepartments[] = 'OR/LR/DR';
             } elseif (in_array($transaction->room_ward, ['Dialysis Unit', 'Dialysis'])) {
                 $requiredDepartments[] = 'CKD';
             }
 
-            // Get all unique departments that have actually signed off (converted to uppercase for safe matching)
             $clearedDepartments = ClearanceLog::where('enccode', $request->enccode)
                 ->pluck('department')
                 ->map(fn($d) => strtoupper(trim($d)))
                 ->toArray();
             
-            // Convert required to uppercase for safe matching
             $safeRequired = array_map(fn($d) => strtoupper(trim($d)), $requiredDepartments);
-
-            // Check if any required departments are missing from the cleared list
-            // array_diff(A, B) returns elements in A that are NOT in B.
-            // So, "What required departments are NOT in the cleared list?"
             $missing = array_diff($safeRequired, $clearedDepartments);
 
-            // If the missing array is completely empty, they have met all requirements!
             if (empty($missing)) {
                 $transaction->update(['overall_status' => 'Cleared']);
             }
@@ -400,6 +392,9 @@ class ClearanceController extends Controller
             'patient_name' => 'required|string',
             'arrival_datetime' => 'nullable|date',
             'disposition' => 'nullable|string',
+            'is_oecb' => 'nullable|boolean',
+            'has_oxygen' => 'nullable|boolean',
+            'oxygen_remarks' => 'nullable|string',
         ]);
 
         ClearanceTransaction::updateOrCreate(
@@ -411,6 +406,10 @@ class ClearanceController extends Controller
                 'disposition' => $request->disposition,
                 'room_ward' => $request->user()->department, 
                 'overall_status' => 'Routing in Progress',
+                'is_oecb' => $request->is_oecb ?? false,
+                'has_oxygen' => $request->has_oxygen ?? false,
+                'oxygen_remarks' => $request->oxygen_remarks,
+                'encoded_by' => $request->user()->name,
             ]
         );
 
