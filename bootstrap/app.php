@@ -1,8 +1,23 @@
 <?php
 
+use Dotenv\Dotenv;
+use Dotenv\Repository\Adapter\EnvConstAdapter;
+use Dotenv\Repository\Adapter\ServerConstAdapter;
+use Dotenv\Repository\RepositoryBuilder;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Support\Env;
+
+// Prevent thread-unsafe putenv() collisions across Laragon Apache virtual hosts
+Env::disablePutenv();
+
+$envRepo = RepositoryBuilder::createWithNoAdapters()
+    ->addAdapter(EnvConstAdapter::class)
+    ->addAdapter(ServerConstAdapter::class)
+    ->make(); // Mutable repository so this project's .env always overrides inherited process env vars
+
+Dotenv::create($envRepo, dirname(__DIR__))->safeLoad();
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
