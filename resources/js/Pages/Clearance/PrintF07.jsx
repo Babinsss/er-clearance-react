@@ -12,8 +12,36 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
     }, []);
 
     const getSignatory = (deptName) => {
-        const searchDept = deptName.replace(' Unit', '').toLowerCase();
-        const log = logs.find(l => (l.department || '').toLowerCase().includes(searchDept));
+        const target = deptName.trim().toUpperCase();
+        
+        const log = logs.find(l => {
+            const d = (l.department || '').trim().toUpperCase();
+            if (target === 'OR') {
+                return d === 'OR' || d === 'OPERATING ROOM' || d === 'OR/LR/DR';
+            }
+            if (target === 'LR/DR') {
+                return d === 'LR/DR' || d === 'LR / DR' || d === 'LR' || d === 'DR' || d === 'DELIVERY ROOM' || d === 'OR/LR/DR';
+            }
+            if (target === 'HDU') {
+                return d === 'HDU' || d === 'CKD' || d === 'DIALYSIS' || d === 'DIALYSIS UNIT' || d === 'HEMODIALYSIS';
+            }
+            if (target === 'CARDIO PULMO') {
+                return d.includes('CARDIO') || d.includes('ECG');
+            }
+            if (target === 'CSR') {
+                return d.includes('CSR') || d.includes('SUPPLIES');
+            }
+            if (target === 'LABORATORY') {
+                return d.includes('LAB');
+            }
+            if (target === 'RADIOLOGY') {
+                return d.includes('RADIO') || d.includes('XRAY');
+            }
+            if (target === 'PHARMACY') {
+                return d.includes('PHARM');
+            }
+            return d === target;
+        });
         
         return log ? { 
             name: log.name, 
@@ -27,20 +55,42 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
 
     const getPrintDepartments = () => {
         const base = ['CSR', 'Radiology', 'Laboratory', 'Pharmacy', 'Cardio Pulmo'];
-        const wardStr = transaction?.room_ward || '';
+        const wardStr = (transaction?.room_ward || '').toLowerCase();
+        const depts = [...base];
         
-        if (['Ortho Ward', 'Ortho', 'Surgical Ward', 'Surgical', 'OB Ward', 'OB'].includes(wardStr)) {
-            return [...base, 'OR/LR/DR'];
+        const isSurgOrOrtho = wardStr.includes('ortho') || wardStr.includes('surg');
+        const isOB = wardStr.includes('ob');
+        const isOutpatient = wardStr.includes('outpatient') || wardStr.includes('opd') || wardStr.includes('hemodialysis') || wardStr.includes('dialysis') || wardStr.includes('hdu');
+        
+        const hasOrLog = logs.some(l => {
+            const d = (l.department || '').toUpperCase().trim();
+            return d === 'OR' || d === 'OPERATING ROOM' || d === 'OR/LR/DR';
+        });
+        const hasLrDrLog = logs.some(l => {
+            const d = (l.department || '').toUpperCase().trim();
+            return ['LR/DR', 'LR / DR', 'LR', 'DR', 'DELIVERY ROOM', 'OR/LR/DR'].includes(d);
+        });
+        const hasHduLog = logs.some(l => {
+            const d = (l.department || '').toUpperCase().trim();
+            return d === 'HDU' || d === 'CKD' || d.includes('DIALYSIS');
+        });
+
+        if (isSurgOrOrtho || hasOrLog) {
+            depts.push('OR');
         }
-        if (['Dialysis Unit', 'Dialysis'].includes(wardStr)) {
-            return [...base, 'CKD'];
+        if (isOB || hasLrDrLog) {
+            depts.push('LR/DR');
         }
-        return base;
+        if (isOutpatient || hasHduLog) {
+            depts.push('HDU');
+        }
+
+        return depts;
     };
 
     const printDepartments = getPrintDepartments();
     const dispositions = ['Improved', 'HAMA', 'Transferred', 'Died', 'Absconded'];
-    const rowClass = printDepartments.length > 5 ? 'h-9 py-1' : 'h-11 py-2.5';
+    const rowClass = printDepartments.length >= 7 ? 'h-8 py-0.5' : printDepartments.length > 5 ? 'h-9 py-1' : 'h-11 py-2.5';
 
     // STAMP LOGIC
     const isOecb = Boolean(transaction?.is_oecb);
@@ -114,10 +164,10 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
                         
                         {/* --- OECB STAMP OVERLAY --- */}
                         <div 
-                            className="absolute z-10 font-black text-xl uppercase tracking-widest px-3 py-0.5 transform -rotate-12 rounded-sm shadow-sm"
+                            className="absolute z-10 font-black text-lg uppercase tracking-widest px-3 py-0.5 transform -rotate-6 rounded-sm shadow-sm"
                             style={{ 
-                                top: '5px', 
-                                right: '12%', 
+                                top: '58px', 
+                                right: '8%', 
                                 border: `3px solid ${stampColor}`, 
                                 color: stampColor,
                                 backgroundColor: 'rgba(255, 255, 255, 0.85)',

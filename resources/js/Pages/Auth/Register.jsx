@@ -151,11 +151,13 @@ export default function Register({ departments = [] }) {
                                 
                                 {/* Dynamic Departments from Database */}
                                 {departments.length > 0 ? (
-                                    departments.map((dept) => (
-                                        <option key={dept.id} value={dept.name}>
-                                            {dept.name}
-                                        </option>
-                                    ))
+                                    departments
+                                        .filter((dept) => !['billing & claims', 'ict / admin'].includes(dept.name.trim().toLowerCase()))
+                                        .map((dept) => (
+                                            <option key={dept.id} value={dept.name}>
+                                                {dept.name}
+                                            </option>
+                                        ))
                                 ) : (
                                     // Fallback if the database is currently empty
                                     <>

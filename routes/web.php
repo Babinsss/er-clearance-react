@@ -52,7 +52,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
         // --- 2. LIVE COST CENTER QUEUE LOGIC ---
         $deptRecord = \App\Models\Department::where('name', $user->department)->first();
-        $costCenters = ['Laboratory', 'Radiology', 'Pharmacy', 'Cardiopulmonary', 'CSR', 'Cardio Pulmo'];
+        $costCenters = ['Laboratory', 'Radiology', 'Pharmacy', 'Cardiopulmonary', 'CSR', 'Cardio Pulmo', 'OR', 'LR/DR', 'LR / DR', 'HDU', 'Operating Room', 'Delivery Room', 'Dialysis'];
 
         if (($deptRecord && $deptRecord->category === 'Cost Center') || in_array($user->department, $costCenters)) {
             
@@ -63,10 +63,53 @@ Route::middleware(['auth', 'verified'])->group(function () {
             
             $clearedEnccodes = $myClearedLogs->keys()->toArray();
 
-            $activeTransactions = \App\Models\ClearanceTransaction::where('overall_status', '!=', 'Cleared')
-                ->whereNotIn('enccode', $clearedEnccodes)
-                ->orderBy('created_at', 'desc')
-                ->get();
+            $activeQuery = \App\Models\ClearanceTransaction::where('overall_status', '!=', 'Cleared')
+                ->whereNotIn('enccode', $clearedEnccodes);
+
+            $completedQuery = \App\Models\ClearanceTransaction::whereIn('enccode', $clearedEnccodes);
+
+            // Filter ward-specific cost centers to their designated originating wards
+            $deptUpper = strtoupper(trim($user->department));
+
+            if ($deptUpper === 'OR' || $deptUpper === 'OPERATING ROOM') {
+                $orWards = ['Surgical Ward', 'Surgical', 'Surgery', 'Ortho Ward', 'Ortho', 'Orthopedic'];
+                $activeQuery->where(function($q) use ($orWards) {
+                    foreach ($orWards as $w) {
+                        $q->orWhere('room_ward', 'like', "%{$w}%");
+                    }
+                });
+                $completedQuery->where(function($q) use ($orWards) {
+                    foreach ($orWards as $w) {
+                        $q->orWhere('room_ward', 'like', "%{$w}%");
+                    }
+                });
+            } elseif ($deptUpper === 'LR/DR' || $deptUpper === 'LR / DR' || $deptUpper === 'LR' || $deptUpper === 'DR' || $deptUpper === 'DELIVERY ROOM') {
+                $lrWards = ['OB Ward', 'OB', 'Obstetrics', 'OB-GYN'];
+                $activeQuery->where(function($q) use ($lrWards) {
+                    foreach ($lrWards as $w) {
+                        $q->orWhere('room_ward', 'like', "%{$w}%");
+                    }
+                });
+                $completedQuery->where(function($q) use ($lrWards) {
+                    foreach ($lrWards as $w) {
+                        $q->orWhere('room_ward', 'like', "%{$w}%");
+                    }
+                });
+            } elseif ($deptUpper === 'HDU' || $deptUpper === 'CKD' || str_contains($deptUpper, 'DIALYSIS')) {
+                $hduWards = ['Outpatient', 'Outpatient Department', 'OPD', 'Hemodialysis Ward', 'Hemodialysis', 'Dialysis Unit', 'Dialysis'];
+                $activeQuery->where(function($q) use ($hduWards) {
+                    foreach ($hduWards as $w) {
+                        $q->orWhere('room_ward', 'like', "%{$w}%");
+                    }
+                });
+                $completedQuery->where(function($q) use ($hduWards) {
+                    foreach ($hduWards as $w) {
+                        $q->orWhere('room_ward', 'like', "%{$w}%");
+                    }
+                });
+            }
+
+            $activeTransactions = $activeQuery->orderBy('created_at', 'desc')->get();
             
             $pendingPatients = $activeTransactions->map(function($txn) {
                 return [
@@ -77,7 +120,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
                 ];
             });
 
-            $completedTransactions = \App\Models\ClearanceTransaction::whereIn('enccode', $clearedEnccodes)
+            $completedTransactions = $completedQuery
                 ->orderBy('updated_at', 'desc')
                 ->get();
 
@@ -165,6 +208,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
     // --- ADMIN ROUTES ---
     Route::get('/admin', [AdminController::class, 'index'])->name('admin.index');
     Route::get('/admin/analytics', [AdminController::class, 'getAnalytics'])->name('admin.analytics');
+    Route::post('/admin/users', [AdminController::class, 'storeUser'])->name('admin.users.store');
     Route::put('/admin/users/{id}', [AdminController::class, 'updateUser'])->name('admin.users.update');
     Route::delete('/admin/users/{id}', [AdminController::class, 'deleteUser'])->name('admin.users.destroy');
     

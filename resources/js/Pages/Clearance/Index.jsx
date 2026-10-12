@@ -6,7 +6,7 @@ export default function Index({ enccode, labOrders = [], cardioOrders = [], radi
     const { auth } = usePage().props;
     const userDept = auth.user.department;
     
-    const costCenters = ['Laboratory', 'Radiology', 'Pharmacy', 'Cardiopulmonary', 'CSR'];
+    const costCenters = ['Laboratory', 'Radiology', 'Pharmacy', 'Cardiopulmonary', 'CSR', 'OR', 'LR/DR', 'HDU'];
     const isCostCenter = costCenters.includes(userDept);
 
     const [isLabReady, setIsLabReady] = useState(false);

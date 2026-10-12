@@ -29,12 +29,16 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
 
     const getRequiredDepartments = (wardStr) => {
         const base = ['Pharmacy', 'Laboratory', 'Radiology', 'Cardio Pulmo', 'CSR'];
+        const ward = (wardStr || '').toLowerCase();
         
-        if (['Ortho Ward', 'Ortho', 'Surgical Ward', 'Surgical', 'OB Ward', 'OB'].includes(wardStr)) {
-            return [...base, 'OR/LR/DR'];
+        if (ward.includes('ortho') || ward.includes('surg')) {
+            return [...base, 'OR'];
         }
-        if (['Dialysis Unit', 'Dialysis'].includes(wardStr)) {
-            return [...base, 'CKD'];
+        if (ward.includes('ob')) {
+            return [...base, 'LR/DR'];
+        }
+        if (ward.includes('outpatient') || ward.includes('opd') || ward.includes('hemodialysis') || ward.includes('dialysis') || ward.includes('hdu')) {
+            return [...base, 'HDU'];
         }
         return base;
     };
@@ -371,7 +375,7 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                         ) : (
                             displayQueue.map((tx, idx) => {
                                 const requiredDepts = getRequiredDepartments(tx.room_ward);
-                                const gridColsClass = requiredDepts.length === 6 ? 'md:grid-cols-6' : 'md:grid-cols-5';
+                                const gridColsClass = requiredDepts.length >= 7 ? 'md:grid-cols-4 lg:grid-cols-7' : requiredDepts.length === 6 ? 'md:grid-cols-3 lg:grid-cols-6' : 'md:grid-cols-5';
 
                                 return (
                                     <div key={idx} className={`bg-white border border-slate-200 rounded-xl p-4 shadow-sm select-none transition-all duration-300 ${activeTab === 'completed' ? 'opacity-90 border-emerald-200' : 'border-slate-200 hover:shadow-md'}`}>
@@ -409,7 +413,16 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
 
                                         <div className={`grid grid-cols-2 ${gridColsClass} gap-2`}>
                                             {requiredDepts.map((dept, i) => {
-                                                const isApproved = tx.cleared_departments?.includes(dept);
+                                                const isApproved = tx.cleared_departments?.some(d => {
+                                                    const cleanD = (d || '').toUpperCase().trim();
+                                                    const cleanTarget = dept.toUpperCase().trim();
+                                                    if (cleanD === cleanTarget) return true;
+                                                    if (cleanTarget === 'OR' && (cleanD === 'OR/LR/DR' || cleanD === 'OPERATING ROOM')) return true;
+                                                    if (cleanTarget === 'LR/DR' && (cleanD === 'OR/LR/DR' || cleanD === 'LR / DR' || cleanD === 'LR' || cleanD === 'DR' || cleanD === 'DELIVERY ROOM')) return true;
+                                                    if (cleanTarget === 'HDU' && (cleanD === 'HDU' || cleanD === 'CKD' || cleanD === 'DIALYSIS' || cleanD === 'DIALYSIS UNIT' || cleanD === 'HEMODIALYSIS')) return true;
+                                                    if (cleanTarget === 'CARDIO PULMO' && (cleanD.includes('CARDIO') || cleanD.includes('ECG'))) return true;
+                                                    return false;
+                                                });
                                                 
                                                 return (
                                                     <div key={i} className={`border rounded-lg p-2.5 text-center cursor-default transition-all duration-500 ${isApproved ? 'bg-emerald-50 border-emerald-300 shadow-sm' : 'bg-slate-50 border-slate-200'}`}>

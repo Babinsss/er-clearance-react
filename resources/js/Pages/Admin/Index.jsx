@@ -10,8 +10,11 @@ export default function AdminDashboard({ staff, departments = [] }) {
     const [toastMessage, setToastMessage] = useState(null);
     
     // Staff State
+    const [isAddUserModalOpen, setIsAddUserModalOpen] = useState(false);
+    const [newUserForm, setNewUserForm] = useState({ name: '', email: '', department: 'ICT / Admin', password: '', password_confirmation: '' });
+    const [userErrors, setUserErrors] = useState({});
     const [editingUser, setEditingUser] = useState(null);
-    const [editForm, setEditForm] = useState({ name: '', email: '', department: '' });
+    const [editForm, setEditForm] = useState({ name: '', email: '', department: '', password: '' });
 
     // Department State
     const [isDeptModalOpen, setIsDeptModalOpen] = useState(false);
@@ -34,18 +37,44 @@ export default function AdminDashboard({ staff, departments = [] }) {
     };
 
     // --- STAFF HANDLERS ---
+    const openAddUserModal = () => {
+        setNewUserForm({ name: '', email: '', department: 'ICT / Admin', password: '', password_confirmation: '' });
+        setUserErrors({});
+        setIsAddUserModalOpen(true);
+    };
+
+    const handleCreateUser = (e) => {
+        e.preventDefault();
+        setUserErrors({});
+        router.post('/admin/users', newUserForm, {
+            preserveScroll: true,
+            onSuccess: () => {
+                setIsAddUserModalOpen(false);
+                showToast(`Created account for ${newUserForm.name} (${newUserForm.department}).`);
+            },
+            onError: (errors) => {
+                setUserErrors(errors);
+            }
+        });
+    };
+
     const openEditModal = (user) => {
         setEditingUser(user);
-        setEditForm({ name: user.name, email: user.email, department: user.department });
+        setUserErrors({});
+        setEditForm({ name: user.name, email: user.email, department: user.department, password: '' });
     };
 
     const handleUpdateUser = (e) => {
         e.preventDefault();
+        setUserErrors({});
         router.put(`/admin/users/${editingUser.id}`, editForm, {
             preserveScroll: true,
             onSuccess: () => {
                 setEditingUser(null);
                 showToast(`Successfully updated ${editForm.name}'s account.`);
+            },
+            onError: (errors) => {
+                setUserErrors(errors);
             }
         });
     };
@@ -158,6 +187,12 @@ export default function AdminDashboard({ staff, departments = [] }) {
                                     />
                                 </div>
                             )}
+                            {activeTab === 'staff' && (
+                                <button onClick={() => openAddUserModal()} className="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm transition-colors whitespace-nowrap flex items-center space-x-1">
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
+                                    <span>Add User / Admin</span>
+                                </button>
+                            )}
                             {activeTab === 'departments' && (
                                 <button onClick={() => openDeptModal()} className="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm transition-colors whitespace-nowrap flex items-center space-x-1">
                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
@@ -234,6 +269,60 @@ export default function AdminDashboard({ staff, departments = [] }) {
                 </div>
             </div>
 
+            {/* ADD STAFF / ADMIN MODAL */}
+            {isAddUserModalOpen && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in duration-200">
+                        <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
+                            <h3 className="font-bold text-slate-800">Add New User / Admin</h3>
+                            <button onClick={() => setIsAddUserModalOpen(false)} className="text-slate-400 hover:text-rose-500 transition-colors">
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                            </button>
+                        </div>
+                        <form onSubmit={handleCreateUser} className="p-6 space-y-4">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-600 uppercase mb-1">Full Name</label>
+                                <input type="text" value={newUserForm.name} onChange={e => setNewUserForm({...newUserForm, name: e.target.value})} placeholder="e.g. Juan Dela Cruz" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-teal-500 focus:border-teal-500" required />
+                                {userErrors.name && <p className="text-xs text-rose-600 mt-1 font-medium">{userErrors.name}</p>}
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-600 uppercase mb-1">Email Address</label>
+                                <input type="email" value={newUserForm.email} onChange={e => setNewUserForm({...newUserForm, email: e.target.value})} placeholder="staff@hospital.com" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-teal-500 focus:border-teal-500" required />
+                                {userErrors.email && <p className="text-xs text-rose-600 mt-1 font-medium">{userErrors.email}</p>}
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-600 uppercase mb-1">Assigned Role / Department</label>
+                                <select value={newUserForm.department} onChange={e => setNewUserForm({...newUserForm, department: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-teal-500 focus:border-teal-500">
+                                    <option value="ICT / Admin">ICT / Admin (Administrator)</option>
+                                    <option value="Billing & Claims">Billing & Claims</option>
+                                    {departments
+                                        .filter(dept => !['billing & claims', 'ict / admin'].includes(dept.name.trim().toLowerCase()))
+                                        .map(dept => (
+                                            <option key={dept.id} value={dept.name}>{dept.name} ({dept.category})</option>
+                                        ))}
+                                </select>
+                                {userErrors.department && <p className="text-xs text-rose-600 mt-1 font-medium">{userErrors.department}</p>}
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-600 uppercase mb-1">Password</label>
+                                    <input type="password" value={newUserForm.password} onChange={e => setNewUserForm({...newUserForm, password: e.target.value})} placeholder="Min. 8 chars" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-teal-500 focus:border-teal-500" required />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-600 uppercase mb-1">Confirm Password</label>
+                                    <input type="password" value={newUserForm.password_confirmation} onChange={e => setNewUserForm({...newUserForm, password_confirmation: e.target.value})} placeholder="Repeat password" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-teal-500 focus:border-teal-500" required />
+                                </div>
+                            </div>
+                            {userErrors.password && <p className="text-xs text-rose-600 font-medium">{userErrors.password}</p>}
+                            <div className="pt-4 flex justify-end gap-2 border-t border-slate-100">
+                                <button type="button" onClick={() => setIsAddUserModalOpen(false)} className="px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">Cancel</button>
+                                <button type="submit" className="px-4 py-2 text-sm font-bold text-white bg-teal-600 hover:bg-teal-700 rounded-lg shadow-sm transition-colors">Create Account</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
             {/* EDIT STAFF MODAL */}
             {editingUser && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
@@ -248,20 +337,29 @@ export default function AdminDashboard({ staff, departments = [] }) {
                             <div>
                                 <label className="block text-xs font-bold text-slate-600 uppercase mb-1">Full Name</label>
                                 <input type="text" value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-teal-500 focus:border-teal-500" required />
+                                {userErrors.name && <p className="text-xs text-rose-600 mt-1 font-medium">{userErrors.name}</p>}
                             </div>
                             <div>
                                 <label className="block text-xs font-bold text-slate-600 uppercase mb-1">Email Address</label>
                                 <input type="email" value={editForm.email} onChange={e => setEditForm({...editForm, email: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-teal-500 focus:border-teal-500" required />
+                                {userErrors.email && <p className="text-xs text-rose-600 mt-1 font-medium">{userErrors.email}</p>}
                             </div>
                             <div>
                                 <label className="block text-xs font-bold text-slate-600 uppercase mb-1">Assigned Department / Ward</label>
                                 <select value={editForm.department} onChange={e => setEditForm({...editForm, department: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-teal-500 focus:border-teal-500">
                                     <option value="ICT / Admin">ICT / Admin</option>
                                     <option value="Billing & Claims">Billing & Claims</option>
-                                    {departments.map(dept => (
-                                        <option key={dept.id} value={dept.name}>{dept.name}</option>
-                                    ))}
+                                    {departments
+                                        .filter(dept => !['billing & claims', 'ict / admin'].includes(dept.name.trim().toLowerCase()))
+                                        .map(dept => (
+                                            <option key={dept.id} value={dept.name}>{dept.name}</option>
+                                        ))}
                                 </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-600 uppercase mb-1">New Password <span className="text-slate-400 font-normal lowercase">(leave blank to keep current)</span></label>
+                                <input type="password" value={editForm.password} onChange={e => setEditForm({...editForm, password: e.target.value})} placeholder="Optional new password" className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-teal-500 focus:border-teal-500" />
+                                {userErrors.password && <p className="text-xs text-rose-600 mt-1 font-medium">{userErrors.password}</p>}
                             </div>
                             <div className="pt-4 flex justify-end gap-2 border-t border-slate-100">
                                 <button type="button" onClick={() => setEditingUser(null)} className="px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">Cancel</button>

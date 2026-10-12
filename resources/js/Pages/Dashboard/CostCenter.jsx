@@ -124,6 +124,9 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
         else if (dept.includes('lab')) orders = data.labOrders;
         else if (dept.includes('radio') || dept.includes('xray')) orders = data.radioOrders;
         else if (dept.includes('cardio') || dept.includes('ecg')) orders = data.cardioOrders;
+        else if (dept === 'or' || dept.includes('operating')) orders = data.orOrders || [];
+        else if (dept.includes('lr') || dept.includes('dr') || dept.includes('delivery')) orders = data.lrDrOrders || [];
+        else if (dept.includes('hdu') || dept.includes('ckd') || dept.includes('dialysis')) orders = data.hduOrders || data.ckdOrders || [];
         
         return Array.isArray(orders) ? orders : [];
     };

@@ -174,6 +174,9 @@ class ClearanceController extends Controller
         $cardioOrders = [];
         $csrOrders = [];
         $pharmacyOrders = [];
+        $orOrders = [];
+        $lrDrOrders = [];
+        $hduOrders = [];
 
         $csrRegex = '/(SYRINGE|MACROSET|MICROSET|CANNULA|VENFLON|GAUZE|GLOVE|TUBE|PACK|NEEDLE|CATH|PLASTER|COTTON|TAPE|CHERRY|BALL|BANDAGE|DRAPE|LANCET|BLADE|SUTURE|DIAPER|UNDERPAD|MASK|GOWN|WATER|STERILE|POVIDONE|ALCOHOL|DRESSING|NSS|SALINE|D5|LR|RINGER|SET|KIT|SWAB|GEL|PUMP|CAP|LINEN|EUROMED)/';
 
@@ -202,6 +205,9 @@ class ClearanceController extends Controller
             
             $isRadio = str_starts_with($code, 'RAD') || preg_match('/(X-?RAY|UTZ|ULTRASOUND|CT|MRI|SCAN|SONOGRAM|RADIOGRAPH|MAMMO|ABDOMEN, WHOLE)/', $desc);
             $isCardio = str_starts_with($code, 'CAR') || $code === 'ECG' || str_contains($desc, 'ECG');
+            $isOR = preg_match('/\b(OR|OPERATING ROOM|SURG|SURGERY)\b/', $desc) || preg_match('/\b(OR FEE|SURGERY|MAJOR OP|MINOR OP|ANESTHESIA)\b/', $desc);
+            $isLRDR = preg_match('/\b(DR|LR|DELIVERY ROOM|LABOR ROOM|OB-GYN)\b/', $desc) || preg_match('/\b(DELIVERY|NSD|CESAREAN|EPISIOTOMY|NEWBORN)\b/', $desc);
+            $isHDU = preg_match('/\b(HDU|CKD|DIALYSIS|HEMODIALYSIS)\b/', $desc);
 
             if ($forcePharma) {
                 $pharmacyOrders[] = $cleanItem;
@@ -211,6 +217,12 @@ class ClearanceController extends Controller
                 $radioOrders[] = $cleanItem;
             } elseif (str_starts_with($code, 'LAB')) {
                 $labOrders[] = $cleanItem;
+            } elseif ($isOR) {
+                $orOrders[] = $cleanItem;
+            } elseif ($isLRDR) {
+                $lrDrOrders[] = $cleanItem;
+            } elseif ($isHDU) {
+                $hduOrders[] = $cleanItem;
             } elseif ($isPharma === 'N' || str_starts_with($majorCategory, '018') || preg_match($csrRegex, $baseName) || str_contains($desc, 'CSR')) {
                 $csrOrders[] = $cleanItem;
             } 
@@ -289,6 +301,9 @@ class ClearanceController extends Controller
             $forcePharma = str_contains($desc, 'PHILRX') || str_contains($desc, 'SODIUM CHLORIDE');
             $isRadio = preg_match('/\bRAD|X-?RAY/', $upperCategory) || preg_match('/(X-?RAY|UTZ|ULTRASOUND|CT|MRI|SCAN|SONOGRAM|RADIOGRAPH|MAMMO|ABDOMEN, WHOLE)/', $desc);
             $isCardio = preg_match('/\bCARD|\bECG\b/', $upperCategory) || str_contains($desc, 'ECG');
+            $isOR = preg_match('/\b(OR|OPERATING ROOM|SURG|SURGERY)\b/', $upperCategory) || preg_match('/\b(OR FEE|SURGERY|MAJOR OP|MINOR OP|ANESTHESIA)\b/', $desc);
+            $isLRDR = preg_match('/\b(DR|LR|DELIVERY ROOM|LABOR ROOM|OB-GYN)\b/', $upperCategory) || preg_match('/\b(DELIVERY|NSD|CESAREAN|EPISIOTOMY|NEWBORN)\b/', $desc);
+            $isHDU = preg_match('/\b(HDU|CKD|DIALYSIS|HEMODIALYSIS)\b/', $upperCategory) || preg_match('/\b(HEMODIALYSIS|DIALYSIS)\b/', $desc);
 
             if ($forcePharma) {
                 $pharmacyOrders[] = $cleanItem;
@@ -296,6 +311,12 @@ class ClearanceController extends Controller
                 $cardioOrders[] = $cleanItem;
             } elseif ($isRadio) {
                 $radioOrders[] = $cleanItem;
+            } elseif ($isOR) {
+                $orOrders[] = $cleanItem;
+            } elseif ($isLRDR) {
+                $lrDrOrders[] = $cleanItem;
+            } elseif ($isHDU) {
+                $hduOrders[] = $cleanItem;
             } elseif ($isBarcode || $isPharma === 'N' || str_starts_with($majorCategory, '018') || preg_match($csrRegex, strtoupper($baseName)) || preg_match('/\bCSR\b/', $upperCategory) || preg_match('/\bSUPPLIES CSR\b/', $upperCategory)) {
                 $csrOrders[] = $cleanItem;
             } elseif (preg_match('/\bLAB(ORATORY|S)?\b/', $upperCategory)) { 
@@ -313,6 +334,9 @@ class ClearanceController extends Controller
         $labOrders = collect($labOrders)->unique('item_description')->values()->all();
         $radioOrders = collect($radioOrders)->unique('item_description')->values()->all();
         $cardioOrders = collect($cardioOrders)->unique('item_description')->values()->all();
+        $orOrders = collect($orOrders)->unique('item_description')->values()->all();
+        $lrDrOrders = collect($lrDrOrders)->unique('item_description')->values()->all();
+        $hduOrders = collect($hduOrders)->unique('item_description')->values()->all();
 
         $clearedDepartments = \App\Models\ClearanceLog::where('enccode', $enccode)
             ->pluck('department')
@@ -327,6 +351,9 @@ class ClearanceController extends Controller
                 'cardioOrders' => $cardioOrders,
                 'pharmacyOrders' => $pharmacyOrders,
                 'csrOrders' => $csrOrders,
+                'orOrders' => $orOrders,
+                'lrDrOrders' => $lrDrOrders,
+                'hduOrders' => $hduOrders,
                 'clearedDepartments' => $clearedDepartments
             ]);
         }
@@ -339,6 +366,9 @@ class ClearanceController extends Controller
             'cardioOrders' => $cardioOrders,
             'pharmacyOrders' => $pharmacyOrders,
             'csrOrders' => $csrOrders,
+            'orOrders' => $orOrders,
+            'lrDrOrders' => $lrDrOrders,
+            'hduOrders' => $hduOrders,
             'clearedDepartments' => $clearedDepartments
         ]);
     }
@@ -362,10 +392,17 @@ class ClearanceController extends Controller
         if ($transaction) {
             $requiredDepartments = ['Pharmacy', 'Laboratory', 'Radiology', 'Cardio Pulmo', 'CSR'];
             
-            if (in_array($transaction->room_ward, ['Ortho Ward', 'Ortho', 'Surgical Ward', 'Surgical', 'OB Ward', 'OB'])) {
-                $requiredDepartments[] = 'OR/LR/DR';
-            } elseif (in_array($transaction->room_ward, ['Dialysis Unit', 'Dialysis'])) {
-                $requiredDepartments[] = 'CKD';
+            $wardStr = strtolower(trim($transaction->room_ward ?? ''));
+            $isSurgOrtho = str_contains($wardStr, 'ortho') || str_contains($wardStr, 'surg');
+            $isOB = str_contains($wardStr, 'ob');
+            $isOutpatient = str_contains($wardStr, 'outpatient') || str_contains($wardStr, 'opd') || str_contains($wardStr, 'hemodialysis') || str_contains($wardStr, 'dialysis') || str_contains($wardStr, 'hdu');
+
+            if ($isSurgOrtho) {
+                $requiredDepartments[] = 'OR';
+            } elseif ($isOB) {
+                $requiredDepartments[] = 'LR/DR';
+            } elseif ($isOutpatient) {
+                $requiredDepartments[] = 'HDU';
             }
 
             $clearedDepartments = ClearanceLog::where('enccode', $request->enccode)
@@ -373,8 +410,37 @@ class ClearanceController extends Controller
                 ->map(fn($d) => strtoupper(trim($d)))
                 ->toArray();
             
-            $safeRequired = array_map(fn($d) => strtoupper(trim($d)), $requiredDepartments);
-            $missing = array_diff($safeRequired, $clearedDepartments);
+            // Check missing departments with flexible alias support
+            $missing = [];
+            foreach ($requiredDepartments as $req) {
+                $reqUpper = strtoupper(trim($req));
+                $isCleared = false;
+                foreach ($clearedDepartments as $cleared) {
+                    if ($cleared === $reqUpper) {
+                        $isCleared = true;
+                        break;
+                    }
+                    if ($reqUpper === 'OR' && ($cleared === 'OR/LR/DR' || $cleared === 'OPERATING ROOM')) {
+                        $isCleared = true;
+                        break;
+                    }
+                    if ($reqUpper === 'LR/DR' && ($cleared === 'OR/LR/DR' || $cleared === 'LR / DR' || $cleared === 'LR' || $cleared === 'DR' || $cleared === 'DELIVERY ROOM')) {
+                        $isCleared = true;
+                        break;
+                    }
+                    if ($reqUpper === 'HDU' && ($cleared === 'HDU' || $cleared === 'CKD' || $cleared === 'DIALYSIS' || $cleared === 'DIALYSIS UNIT' || $cleared === 'HEMODIALYSIS')) {
+                        $isCleared = true;
+                        break;
+                    }
+                    if ($reqUpper === 'CARDIO PULMO' && (str_contains($cleared, 'CARDIO') || str_contains($cleared, 'ECG'))) {
+                        $isCleared = true;
+                        break;
+                    }
+                }
+                if (!$isCleared) {
+                    $missing[] = $req;
+                }
+            }
 
             if (empty($missing)) {
                 $transaction->update(['overall_status' => 'Cleared']);
