@@ -24,18 +24,61 @@ class ClearanceController extends Controller
             $hpercode = $matches[1];
         }
 
-        // 2. Fetch Active Encounters
-        $encounterCodes = [$enccode]; 
+        // 2. Determine Date Range & Active Encounters (ER vs Ward)
+        $encounterCodes = [$enccode];
+        $wardName = strtolower(trim($transaction->room_ward ?? ''));
+        $toecode = strtoupper(trim($currentEncounter->toecode ?? ''));
 
-        if ($hpercode && $currentEncounter && isset($currentEncounter->encdate)) {
-            $currentDate = $currentEncounter->encdate;
-            $historyEncounters = $db->table('henctr')
-                ->where('hpercode', $hpercode)
-                ->where('encdate', '>=', date('Y-m-d 00:00:00', strtotime($currentDate . ' -3 days')))
-                ->pluck('enccode')
-                ->toArray();
-                
-            $encounterCodes = array_unique(array_merge($encounterCodes, $historyEncounters));
+        $isErPatient = $wardName !== ''
+            ? ($wardName === 'emergency room' || $wardName === 'er')
+            : ($toecode === 'ER');
+
+        $startDate = null;
+        $endDate = null;
+
+        if ($isErPatient) {
+            // ER PATIENTS: Only refer to the encounter date with a limit of 2 days
+            $baseEncDate = $currentEncounter->encdate ?? ($transaction->arrival_datetime ?? now());
+            $startDate = date('Y-m-d 00:00:00', strtotime($baseEncDate));
+            $endDate = date('Y-m-d 23:59:59', strtotime($baseEncDate . ' +2 days'));
+        } else {
+            // WARD PATIENTS: Pull all charges from the date admitted up until the day of discharge
+            $admLog = $db->table('hadmlog')->where('enccode', $enccode)->first();
+
+            if (!$admLog && $hpercode) {
+                $admQuery = $db->table('hadmlog')->where('hpercode', $hpercode);
+                if ($currentEncounter && isset($currentEncounter->encdate)) {
+                    $admQuery->where('admdate', '>=', date('Y-m-d 00:00:00', strtotime($currentEncounter->encdate . ' -2 days')));
+                }
+                $admLog = $admQuery->orderBy('admdate', 'desc')->first();
+            }
+
+            $admDate = $admLog->admdate
+                ?? ($currentEncounter->encdate ?? ($transaction->arrival_datetime ?? now()));
+
+            // If ERADM encounter timestamp was slightly earlier than admdate, use the earlier date as admission start
+            if ($currentEncounter && isset($currentEncounter->encdate) && strtotime($currentEncounter->encdate) < strtotime($admDate)) {
+                $admDate = $currentEncounter->encdate;
+            }
+
+            $disDate = (!empty($admLog->disdate)) ? $admLog->disdate : now();
+
+            $startDate = date('Y-m-d 00:00:00', strtotime($admDate));
+            $endDate = date('Y-m-d 23:59:59', strtotime($disDate));
+
+            if (strtotime($endDate) < strtotime($startDate)) {
+                $endDate = date('Y-m-d 23:59:59');
+            }
+
+            if ($hpercode) {
+                $wardEncounters = $db->table('henctr')
+                    ->where('hpercode', $hpercode)
+                    ->whereBetween('encdate', [$startDate, $endDate])
+                    ->pluck('enccode')
+                    ->toArray();
+
+                $encounterCodes = array_unique(array_merge($encounterCodes, $wardEncounters));
+            }
         }
 
         // 3. SOURCE A: Doctor's Orders
@@ -59,6 +102,7 @@ class ClearanceController extends Controller
                 $join->whereRaw("TRIM(d.orcode) = REPLACE(cl2.cl2comb, ' ', '')");
             })
             ->whereIn('d.enccode', $encounterCodes)
+            ->whereBetween('d.dodate', [$startDate, $endDate])
             ->select([
                 'd.dodate as datelog',
                 'd.orcode as order_code',
@@ -96,6 +140,7 @@ class ClearanceController extends Controller
                 $join->whereRaw("TRIM(r.dmdcomb) = REPLACE(cl2.cl2comb, ' ', '')");
             })
             ->whereIn('r.enccode', $encounterCodes)
+            ->whereBetween('r.dodate', [$startDate, $endDate])
             ->select([
                 'r.dodate as datelog',
                 'r.dmdcomb as order_code',
@@ -144,6 +189,7 @@ class ClearanceController extends Controller
                 $join->whereRaw('TRIM(pr.proccode) = TRIM(p_trans.proccode)');
             })
             ->whereIn('pc.enccode', $encounterCodes)
+            ->whereBetween('pc.pcchrgdte', [$startDate, $endDate])
             ->whereNull('pc.deleted_at')
             ->where(function($query) {
                 $query->whereNotIn('pc.pcstat', ['V', 'C', 'D'])->orWhereNull('pc.pcstat');
@@ -387,65 +433,7 @@ class ClearanceController extends Controller
             'user_id' => $request->user()->id, 
         ]);
 
-        $transaction = ClearanceTransaction::where('enccode', $request->enccode)->first();
-        
-        if ($transaction) {
-            $requiredDepartments = ['Pharmacy', 'Laboratory', 'Radiology', 'Cardio Pulmo', 'CSR'];
-            
-            $wardStr = strtolower(trim($transaction->room_ward ?? ''));
-            $isSurgOrtho = str_contains($wardStr, 'ortho') || str_contains($wardStr, 'surg');
-            $isOB = str_contains($wardStr, 'ob');
-            $isOutpatient = str_contains($wardStr, 'outpatient') || str_contains($wardStr, 'opd') || str_contains($wardStr, 'hemodialysis') || str_contains($wardStr, 'dialysis') || str_contains($wardStr, 'hdu');
-
-            if ($isSurgOrtho) {
-                $requiredDepartments[] = 'OR';
-            } elseif ($isOB) {
-                $requiredDepartments[] = 'LR/DR';
-            } elseif ($isOutpatient) {
-                $requiredDepartments[] = 'HDU';
-            }
-
-            $clearedDepartments = ClearanceLog::where('enccode', $request->enccode)
-                ->pluck('department')
-                ->map(fn($d) => strtoupper(trim($d)))
-                ->toArray();
-            
-            // Check missing departments with flexible alias support
-            $missing = [];
-            foreach ($requiredDepartments as $req) {
-                $reqUpper = strtoupper(trim($req));
-                $isCleared = false;
-                foreach ($clearedDepartments as $cleared) {
-                    if ($cleared === $reqUpper) {
-                        $isCleared = true;
-                        break;
-                    }
-                    if ($reqUpper === 'OR' && ($cleared === 'OR/LR/DR' || $cleared === 'OPERATING ROOM')) {
-                        $isCleared = true;
-                        break;
-                    }
-                    if ($reqUpper === 'LR/DR' && ($cleared === 'OR/LR/DR' || $cleared === 'LR / DR' || $cleared === 'LR' || $cleared === 'DR' || $cleared === 'DELIVERY ROOM')) {
-                        $isCleared = true;
-                        break;
-                    }
-                    if ($reqUpper === 'HDU' && ($cleared === 'HDU' || $cleared === 'CKD' || $cleared === 'DIALYSIS' || $cleared === 'DIALYSIS UNIT' || $cleared === 'HEMODIALYSIS')) {
-                        $isCleared = true;
-                        break;
-                    }
-                    if ($reqUpper === 'CARDIO PULMO' && (str_contains($cleared, 'CARDIO') || str_contains($cleared, 'ECG'))) {
-                        $isCleared = true;
-                        break;
-                    }
-                }
-                if (!$isCleared) {
-                    $missing[] = $req;
-                }
-            }
-
-            if (empty($missing)) {
-                $transaction->update(['overall_status' => 'Cleared']);
-            }
-        }
+        self::recalculateStatus($request->enccode);
 
         return back();
     }
@@ -463,6 +451,9 @@ class ClearanceController extends Controller
             'oxygen_remarks' => 'nullable|string',
         ]);
 
+        $existing = ClearanceTransaction::where('enccode', $request->enccode)->first();
+        $initialStatus = ($existing && $existing->overall_status !== 'Cancelled') ? $existing->overall_status : 'Routing in Progress';
+
         ClearanceTransaction::updateOrCreate(
             ['enccode' => $request->enccode],
             [
@@ -471,7 +462,7 @@ class ClearanceController extends Controller
                 'arrival_datetime' => $request->arrival_datetime,
                 'disposition' => $request->disposition,
                 'room_ward' => $request->user()->department, 
-                'overall_status' => 'Routing in Progress',
+                'overall_status' => $initialStatus,
                 'is_oecb' => $request->is_oecb ?? false,
                 'has_oxygen' => $request->has_oxygen ?? false,
                 'oxygen_remarks' => $request->oxygen_remarks,
@@ -479,6 +470,77 @@ class ClearanceController extends Controller
             ]
         );
 
+        self::recalculateStatus($request->enccode);
+
         return back();
+    }
+
+    public static function recalculateStatus($enccode)
+    {
+        $transaction = ClearanceTransaction::where('enccode', $enccode)->first();
+        if (!$transaction) {
+            return;
+        }
+
+        // Do not revert archived or cancelled transactions
+        if (in_array($transaction->overall_status, ['Archived', 'Cancelled'])) {
+            return;
+        }
+
+        $requiredDepartments = ['Pharmacy', 'Laboratory', 'Radiology', 'Cardio Pulmo', 'CSR'];
+        
+        $wardStr = strtolower(trim($transaction->room_ward ?? ''));
+        $isSurgOrtho = str_contains($wardStr, 'ortho') || str_contains($wardStr, 'surg');
+        $isOB = str_contains($wardStr, 'ob');
+        $isOutpatient = str_contains($wardStr, 'outpatient') || str_contains($wardStr, 'opd') || str_contains($wardStr, 'hemodialysis') || str_contains($wardStr, 'dialysis') || str_contains($wardStr, 'hdu');
+
+        if ($isSurgOrtho) {
+            $requiredDepartments[] = 'OR';
+        } elseif ($isOB) {
+            $requiredDepartments[] = 'LR/DR';
+        } elseif ($isOutpatient) {
+            $requiredDepartments[] = 'HDU';
+        }
+
+        $clearedDepartments = ClearanceLog::where('enccode', $enccode)
+            ->pluck('department')
+            ->map(fn($d) => strtoupper(trim($d)))
+            ->toArray();
+        
+        $missing = [];
+        foreach ($requiredDepartments as $req) {
+            $reqUpper = strtoupper(trim($req));
+            $isCleared = false;
+            foreach ($clearedDepartments as $cleared) {
+                if ($cleared === $reqUpper) {
+                    $isCleared = true;
+                    break;
+                }
+                if ($reqUpper === 'OR' && ($cleared === 'OR/LR/DR' || $cleared === 'OPERATING ROOM')) {
+                    $isCleared = true;
+                    break;
+                }
+                if ($reqUpper === 'LR/DR' && ($cleared === 'OR/LR/DR' || $cleared === 'LR / DR' || $cleared === 'LR' || $cleared === 'DR' || $cleared === 'DELIVERY ROOM')) {
+                    $isCleared = true;
+                    break;
+                }
+                if ($reqUpper === 'HDU' && ($cleared === 'HDU' || $cleared === 'CKD' || $cleared === 'DIALYSIS' || $cleared === 'DIALYSIS UNIT' || $cleared === 'HEMODIALYSIS')) {
+                    $isCleared = true;
+                    break;
+                }
+                if ($reqUpper === 'CARDIO PULMO' && (str_contains($cleared, 'CARDIO') || str_contains($cleared, 'ECG'))) {
+                    $isCleared = true;
+                    break;
+                }
+            }
+            if (!$isCleared) {
+                $missing[] = $req;
+            }
+        }
+
+        $newStatus = empty($missing) ? 'Cleared' : 'Routing in Progress';
+        if ($transaction->overall_status !== $newStatus) {
+            $transaction->update(['overall_status' => $newStatus]);
+        }
     }
 }

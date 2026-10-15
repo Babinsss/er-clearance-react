@@ -35,6 +35,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
         
         // --- 1. BILLING & CLAIMS LOGIC ---
         if ($user->department === 'Billing & Claims') {
+            $pendingTx = \App\Models\ClearanceTransaction::where('overall_status', 'Routing in Progress')->get();
+            foreach ($pendingTx as $ptx) {
+                \App\Http\Controllers\ClearanceController::recalculateStatus($ptx->enccode);
+            }
+
             $clearedPatients = \App\Models\ClearanceTransaction::where('overall_status', 'Cleared')
                 ->orderBy('updated_at', 'desc')
                 ->get();
@@ -63,10 +68,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
             
             $clearedEnccodes = $myClearedLogs->keys()->toArray();
 
-            $activeQuery = \App\Models\ClearanceTransaction::where('overall_status', '!=', 'Cleared')
+            $activeQuery = \App\Models\ClearanceTransaction::whereNotIn('overall_status', ['Cleared', 'Cancelled', 'Archived'])
                 ->whereNotIn('enccode', $clearedEnccodes);
 
-            $completedQuery = \App\Models\ClearanceTransaction::whereIn('enccode', $clearedEnccodes);
+            $completedQuery = \App\Models\ClearanceTransaction::where('overall_status', '!=', 'Cancelled')
+                ->whereIn('enccode', $clearedEnccodes);
 
             // Filter ward-specific cost centers to their designated originating wards
             $deptUpper = strtoupper(trim($user->department));
@@ -145,6 +151,14 @@ Route::middleware(['auth', 'verified'])->group(function () {
         $patient = null;
         $clearances = [];
 
+        $rawWardTransactions = \App\Models\ClearanceTransaction::where('room_ward', $user->department)
+            ->orderBy('updated_at', 'desc')
+            ->get();
+
+        foreach ($rawWardTransactions->where('overall_status', 'Routing in Progress') as $tx) {
+            \App\Http\Controllers\ClearanceController::recalculateStatus($tx->enccode);
+        }
+
         $wardTransactions = \App\Models\ClearanceTransaction::where('room_ward', $user->department)
             ->orderBy('updated_at', 'desc')
             ->get();
@@ -182,7 +196,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
                     'enccode' => $encounter->enccode,
                     'hpercode' => $encounter->hpercode,
                     'name' => $encounter->full_name,
-                    'is_routed' => $transaction ? true : false,
+                    'is_routed' => ($transaction && $transaction->overall_status !== 'Cancelled') ? true : false,
                     'arrival_datetime' => $transaction && $transaction->arrival_datetime 
                         ? date('Y-m-d\TH:i', strtotime($transaction->arrival_datetime)) 
                         : '',
@@ -215,6 +229,10 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::post('/admin/departments', [AdminController::class, 'storeDepartment'])->name('admin.departments.store');
     Route::put('/admin/departments/{id}', [AdminController::class, 'updateDepartment'])->name('admin.departments.update');
     Route::delete('/admin/departments/{id}', [AdminController::class, 'deleteDepartment'])->name('admin.departments.destroy');
+
+    Route::post('/admin/transactions/{id}/cancel', [AdminController::class, 'cancelTransaction'])->name('admin.transactions.cancel');
+    Route::post('/admin/transactions/{id}/reactivate', [AdminController::class, 'reactivateTransaction'])->name('admin.transactions.reactivate');
+    Route::delete('/admin/transactions/{id}', [AdminController::class, 'deleteTransaction'])->name('admin.transactions.destroy');
 
     // --- CLEARANCE ROUTES ---
     Route::post('/transactions', [ClearanceController::class, 'storeTransaction'])->name('transactions.store');

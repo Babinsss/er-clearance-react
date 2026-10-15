@@ -1,14 +1,30 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Head, router } from '@inertiajs/react';
 import PortalLayout from '@/Layouts/PortalLayout';
 import TurnaroundChart from '@/Components/TurnaroundChart'; // <-- IMPORTED CHART
 
-export default function AdminDashboard({ staff, departments = [] }) {
+export default function AdminDashboard({ staff = [], departments = [], transactions = [] }) {
     // Default to analytics tab so the chart is the first thing the Admin sees
     const [activeTab, setActiveTab] = useState('analytics'); 
     const [searchTerm, setSearchTerm] = useState('');
     const [toastMessage, setToastMessage] = useState(null);
+    const [patientFilter, setPatientFilter] = useState('all');
+    const [staffFilter, setStaffFilter] = useState('all'); // 'all', 'online', 'offline'
     
+    // Auto-refresh every 15s to keep active users and clearance queues updated
+    useEffect(() => {
+        const pollInterval = setInterval(() => {
+            router.reload({
+                only: ['staff', 'transactions'],
+                preserveScroll: true,
+                preserveState: true,
+            });
+        }, 15000);
+        return () => clearInterval(pollInterval);
+    }, []);
+
+    const activeUsersCount = staff.filter(u => u.is_online).length;
+
     // Staff State
     const [isAddUserModalOpen, setIsAddUserModalOpen] = useState(false);
     const [newUserForm, setNewUserForm] = useState({ name: '', email: '', department: 'ICT / Admin', password: '', password_confirmation: '' });
@@ -21,19 +37,71 @@ export default function AdminDashboard({ staff, departments = [] }) {
     const [editingDept, setEditingDept] = useState(null);
     const [deptForm, setDeptForm] = useState({ name: '', category: 'Ward' });
 
-    const filteredStaff = staff.filter(user => 
-        user.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-        user.department.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    const filteredStaff = staff.filter(user => {
+        const term = searchTerm.toLowerCase();
+        const matchesSearch = 
+            (user.name || '').toLowerCase().includes(term) || 
+            (user.department || '').toLowerCase().includes(term) ||
+            (user.email || '').toLowerCase().includes(term) ||
+            (user.last_ip_address || '').includes(term);
+
+        if (!matchesSearch) return false;
+        if (staffFilter === 'online') return user.is_online;
+        if (staffFilter === 'offline') return !user.is_online;
+        return true;
+    });
 
     const filteredDepts = departments.filter(dept => 
         dept.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
         dept.category.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
+    const filteredTransactions = transactions.filter(tx => {
+        const term = searchTerm.toLowerCase();
+        const matchesSearch = 
+            (tx.patient_name || '').toLowerCase().includes(term) || 
+            (tx.hospital_number || '').includes(term) ||
+            (tx.enccode || '').toLowerCase().includes(term) ||
+            (tx.room_ward || '').toLowerCase().includes(term);
+
+        if (!matchesSearch) return false;
+        if (patientFilter === 'all') return true;
+        return tx.overall_status === patientFilter;
+    });
+
+    const activeRoutingCount = transactions.filter(t => t.overall_status === 'Routing in Progress').length;
+
     const showToast = (message) => {
         setToastMessage(message);
         setTimeout(() => setToastMessage(null), 3000);
+    };
+
+    // --- PATIENT ROUTING HANDLERS ---
+    const handleCancelPatient = (id, name) => {
+        if (confirm(`Are you sure you want to CANCEL clearance routing for ${name}?\n\nThis will immediately remove the patient from all clinical cost center queues.`)) {
+            router.post(`/admin/transactions/${id}/cancel`, {}, {
+                preserveScroll: true,
+                onSuccess: () => showToast(`Clearance routing for ${name} has been cancelled.`)
+            });
+        }
+    };
+
+    const handleReactivatePatient = (id, name) => {
+        if (confirm(`Re-activate clearance routing for ${name}?`)) {
+            router.post(`/admin/transactions/${id}/reactivate`, {}, {
+                preserveScroll: true,
+                onSuccess: () => showToast(`Clearance routing for ${name} has been re-activated.`)
+            });
+        }
+    };
+
+    const handleDeletePatient = (id, name) => {
+        if (confirm(`Permanently DELETE the routing record for ${name}?\n\nThis action cannot be undone.`)) {
+            router.delete(`/admin/transactions/${id}`, {
+                preserveScroll: true,
+                onSuccess: () => showToast(`Routing record for ${name} has been permanently deleted.`)
+            });
+        }
     };
 
     // --- STAFF HANDLERS ---
@@ -150,9 +218,29 @@ export default function AdminDashboard({ staff, departments = [] }) {
                             <span>Analytics Overview</span>
                         </button>
 
-                        <button onClick={() => setActiveTab('staff')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg text-sm font-bold transition-all ${activeTab === 'staff' ? 'bg-teal-500/20 text-teal-300 border-l-4 border-teal-400' : 'text-slate-400 hover:bg-slate-800 border-l-4 border-transparent'}`}>
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
-                            <span>Staff Accounts</span>
+                        <button onClick={() => setActiveTab('patients')} className={`w-full flex items-center justify-between px-4 py-3 rounded-lg text-sm font-bold transition-all ${activeTab === 'patients' ? 'bg-teal-500/20 text-teal-300 border-l-4 border-teal-400' : 'text-slate-400 hover:bg-slate-800 border-l-4 border-transparent'}`}>
+                            <div className="flex items-center space-x-3">
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+                                <span>Routed Patients</span>
+                            </div>
+                            {activeRoutingCount > 0 && (
+                                <span className="bg-amber-500/30 text-amber-300 text-xs px-2 py-0.5 rounded-full font-bold">
+                                    {activeRoutingCount}
+                                </span>
+                            )}
+                        </button>
+
+                        <button onClick={() => setActiveTab('staff')} className={`w-full flex items-center justify-between px-4 py-3 rounded-lg text-sm font-bold transition-all ${activeTab === 'staff' ? 'bg-teal-500/20 text-teal-300 border-l-4 border-teal-400' : 'text-slate-400 hover:bg-slate-800 border-l-4 border-transparent'}`}>
+                            <div className="flex items-center space-x-3">
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
+                                <span>Staff Accounts</span>
+                            </div>
+                            {activeUsersCount > 0 && (
+                                <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[11px] px-2 py-0.5 rounded-full font-bold flex items-center space-x-1.5">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                                    <span>{activeUsersCount} Online</span>
+                                </span>
+                            )}
                         </button>
 
                         <button onClick={() => setActiveTab('departments')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg text-sm font-bold transition-all ${activeTab === 'departments' ? 'bg-teal-500/20 text-teal-300 border-l-4 border-teal-400' : 'text-slate-400 hover:bg-slate-800 border-l-4 border-transparent'}`}>
@@ -167,14 +255,64 @@ export default function AdminDashboard({ staff, departments = [] }) {
                     <div className="px-6 py-5 border-b border-slate-200 bg-slate-50 flex flex-col md:flex-row justify-between items-center gap-4 shrink-0">
                         <div>
                             <h3 className="text-lg font-bold text-slate-800">
-                                {activeTab === 'analytics' ? 'Hospital Performance' : (activeTab === 'staff' ? 'Staff Access Management' : 'Hospital Departments')}
+                                {activeTab === 'analytics' && 'Hospital Performance'}
+                                {activeTab === 'patients' && 'Clearance Routing Management'}
+                                {activeTab === 'staff' && 'Staff Accounts & Active Users'}
+                                {activeTab === 'departments' && 'Hospital Departments'}
                             </h3>
                             <p className="text-xs text-slate-500 font-medium">
-                                {activeTab === 'analytics' ? 'Monitor live department clearance speeds.' : (activeTab === 'staff' ? 'View and modify hospital staff roles.' : 'Manage available wards and cost centers.')}
+                                {activeTab === 'analytics' && 'Monitor live department clearance speeds.'}
+                                {activeTab === 'patients' && 'View, cancel, or re-activate patient clearance transactions.'}
+                                {activeTab === 'staff' && `Monitor real-time online staff and manage permissions (${activeUsersCount} currently online).`}
+                                {activeTab === 'departments' && 'Manage available wards and cost centers.'}
                             </p>
                         </div>
                         
-                        <div className="flex items-center space-x-4 w-full md:w-auto">
+                        <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+                            {activeTab === 'patients' && (
+                                <div className="flex items-center space-x-1 bg-slate-200/80 p-1 rounded-lg text-xs font-bold">
+                                    {[
+                                        { id: 'all', label: 'All' },
+                                        { id: 'Routing in Progress', label: 'In Progress' },
+                                        { id: 'Cleared', label: 'Cleared' },
+                                        { id: 'Cancelled', label: 'Cancelled' },
+                                        { id: 'Archived', label: 'Archived' },
+                                    ].map(pill => (
+                                        <button
+                                            key={pill.id}
+                                            onClick={() => setPatientFilter(pill.id)}
+                                            className={`px-2.5 py-1 rounded-md transition-all ${patientFilter === pill.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+                                        >
+                                            {pill.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+
+                            {activeTab === 'staff' && (
+                                <div className="flex items-center space-x-1 bg-slate-200/80 p-1 rounded-lg text-xs font-bold">
+                                    <button
+                                        onClick={() => setStaffFilter('all')}
+                                        className={`px-2.5 py-1 rounded-md transition-all ${staffFilter === 'all' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+                                    >
+                                        All ({staff.length})
+                                    </button>
+                                    <button
+                                        onClick={() => setStaffFilter('online')}
+                                        className={`px-2.5 py-1 rounded-md transition-all flex items-center space-x-1.5 ${staffFilter === 'online' ? 'bg-white text-emerald-800 shadow-sm' : 'text-emerald-700 hover:text-emerald-900'}`}
+                                    >
+                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                                        <span>Online ({activeUsersCount})</span>
+                                    </button>
+                                    <button
+                                        onClick={() => setStaffFilter('offline')}
+                                        className={`px-2.5 py-1 rounded-md transition-all ${staffFilter === 'offline' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+                                    >
+                                        Offline ({staff.length - activeUsersCount})
+                                    </button>
+                                </div>
+                            )}
+
                             {activeTab !== 'analytics' && (
                                 <div className="w-full md:w-64 relative">
                                     <svg className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
@@ -183,7 +321,7 @@ export default function AdminDashboard({ staff, departments = [] }) {
                                         value={searchTerm}
                                         onChange={e => setSearchTerm(e.target.value)}
                                         className="w-full pl-9 pr-3 py-2 rounded-lg border-slate-300 shadow-sm focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm transition-all" 
-                                        placeholder={`Search ${activeTab}...`}
+                                        placeholder={`Search ${activeTab === 'patients' ? 'patients, hospital #...' : activeTab}...`}
                                     />
                                 </div>
                             )}
@@ -212,11 +350,18 @@ export default function AdminDashboard({ staff, departments = [] }) {
                         ) : (
                             <table className="w-full text-left border-collapse">
                                 <thead className="sticky top-0 bg-white shadow-sm z-10">
-                                    {activeTab === 'staff' ? (
+                                    {activeTab === 'patients' ? (
                                         <tr className="text-slate-500 text-[11px] font-bold uppercase tracking-wider border-b border-slate-200 bg-slate-50">
-                                            <th className="p-4 pl-6">Staff Name</th>
-                                            <th className="p-4">Email Address</th>
+                                            <th className="p-4 pl-6">Patient & Encounter</th>
+                                            <th className="p-4">Originating Ward</th>
+                                            <th className="p-4">Status & Cleared Stations</th>
+                                            <th className="p-4 text-right pr-6">Routing Actions</th>
+                                        </tr>
+                                    ) : activeTab === 'staff' ? (
+                                        <tr className="text-slate-500 text-[11px] font-bold uppercase tracking-wider border-b border-slate-200 bg-slate-50">
+                                            <th className="p-4 pl-6">Staff Member & Account</th>
                                             <th className="p-4">Assigned Department</th>
+                                            <th className="p-4">Live Status & Activity</th>
                                             <th className="p-4 text-right pr-6">Actions</th>
                                         </tr>
                                     ) : (
@@ -228,20 +373,182 @@ export default function AdminDashboard({ staff, departments = [] }) {
                                     )}
                                 </thead>
                                 <tbody className="text-sm divide-y divide-slate-100">
-                                    {activeTab === 'staff' ? (
-                                        filteredStaff.map((user) => (
-                                            <tr key={user.id} className="hover:bg-slate-50 transition-colors">
-                                                <td className="p-4 pl-6 font-bold text-slate-800">{user.name}</td>
-                                                <td className="p-4 text-slate-500">{user.email}</td>
-                                                <td className="p-4">
-                                                    <span className="bg-slate-100 text-slate-700 text-xs font-bold px-2.5 py-1 rounded border border-slate-200">{user.department}</span>
-                                                </td>
-                                                <td className="p-4 pr-6 text-right">
-                                                    <button onClick={() => openEditModal(user)} className="text-teal-600 hover:text-teal-800 font-bold text-xs mr-4 transition-colors">EDIT</button>
-                                                    <button onClick={() => handleDeleteUser(user.id, user.name)} className="text-rose-500 hover:text-rose-700 font-bold text-xs transition-colors disabled:opacity-50" disabled={user.department === 'ICT / Admin'}>DELETE</button>
-                                                </td>
-                                            </tr>
-                                        ))
+                                    {activeTab === 'patients' ? (
+                                        filteredTransactions.length === 0 ? (
+                                            <tr><td colSpan="4" className="p-8 text-center text-slate-500 italic">No routed patient records found.</td></tr>
+                                        ) : (
+                                            filteredTransactions.map((tx) => (
+                                                <tr key={tx.id} className="hover:bg-slate-50 transition-colors">
+                                                    <td className="p-4 pl-6">
+                                                        <div className="font-bold text-slate-800 text-sm leading-snug">{tx.patient_name}</div>
+                                                        <div className="flex flex-wrap items-center gap-2 mt-1 text-xs">
+                                                            <span className="font-mono text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                                                                Hosp #: {tx.hospital_number}
+                                                            </span>
+                                                            <span className="font-mono text-slate-400 text-[11px]">
+                                                                Enc: {tx.enccode}
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex items-center gap-2 mt-1.5">
+                                                            <span className="text-[11px] text-slate-400">
+                                                                Routed: {new Date(tx.created_at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })} {new Date(tx.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                            </span>
+                                                            {tx.is_oecb ? (
+                                                                <span className="bg-amber-100 text-amber-800 text-[10px] font-black px-1.5 py-0.5 rounded border border-amber-300">
+                                                                    OECB
+                                                                </span>
+                                                            ) : null}
+                                                            {tx.has_oxygen ? (
+                                                                <span className="bg-sky-100 text-sky-800 text-[10px] font-bold px-1.5 py-0.5 rounded border border-sky-300" title={tx.oxygen_remarks}>
+                                                                    Oxygen
+                                                                </span>
+                                                            ) : null}
+                                                        </div>
+                                                    </td>
+                                                    <td className="p-4">
+                                                        <span className="font-bold text-slate-700 text-sm block">{tx.room_ward || 'Unknown Ward'}</span>
+                                                        {tx.encoded_by && (
+                                                            <span className="text-xs text-slate-400 block mt-0.5">By: {tx.encoded_by}</span>
+                                                        )}
+                                                    </td>
+                                                    <td className="p-4">
+                                                        <div className="mb-2">
+                                                            <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold border ${
+                                                                tx.overall_status === 'Cleared'
+                                                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                                                    : (tx.overall_status === 'Cancelled'
+                                                                        ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                                                        : (tx.overall_status === 'Archived'
+                                                                            ? 'bg-slate-100 text-slate-600 border-slate-300'
+                                                                            : 'bg-amber-50 text-amber-700 border-amber-200'))
+                                                            }`}>
+                                                                <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${
+                                                                    tx.overall_status === 'Cleared'
+                                                                        ? 'bg-emerald-500'
+                                                                        : (tx.overall_status === 'Cancelled'
+                                                                            ? 'bg-rose-500'
+                                                                            : (tx.overall_status === 'Archived'
+                                                                                ? 'bg-slate-400'
+                                                                                : 'bg-amber-500 animate-pulse'))
+                                                                }`}></span>
+                                                                {tx.overall_status}
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex flex-wrap gap-1 max-w-xs">
+                                                            {tx.cleared_departments && tx.cleared_departments.length > 0 ? (
+                                                                tx.cleared_departments.map((dept, i) => (
+                                                                    <span key={i} className="bg-slate-100 text-slate-600 text-[10px] font-semibold px-1.5 py-0.5 rounded border border-slate-200">
+                                                                        ✓ {dept}
+                                                                    </span>
+                                                                ))
+                                                            ) : (
+                                                                <span className="text-xs text-slate-400 italic">No stations cleared yet</span>
+                                                            )}
+                                                        </div>
+                                                    </td>
+                                                    <td className="p-4 pr-6 text-right">
+                                                        <div className="flex items-center justify-end gap-2">
+                                                            {tx.overall_status === 'Routing in Progress' && (
+                                                                <button
+                                                                    onClick={() => handleCancelPatient(tx.id, tx.patient_name)}
+                                                                    className="bg-rose-50 hover:bg-rose-100 text-rose-600 hover:text-rose-700 border border-rose-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center space-x-1"
+                                                                    title="Cancel clearance routing for this patient"
+                                                                >
+                                                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                                                    <span>Cancel Routing</span>
+                                                                </button>
+                                                            )}
+                                                            {tx.overall_status === 'Cancelled' && (
+                                                                <button
+                                                                    onClick={() => handleReactivatePatient(tx.id, tx.patient_name)}
+                                                                    className="bg-teal-50 hover:bg-teal-100 text-teal-700 hover:text-teal-800 border border-teal-300 px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center space-x-1"
+                                                                    title="Re-activate clearance routing"
+                                                                >
+                                                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                                                                    <span>Re-activate</span>
+                                                                </button>
+                                                            )}
+                                                            <button
+                                                                onClick={() => handleDeletePatient(tx.id, tx.patient_name)}
+                                                                className="text-slate-400 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100 transition-colors"
+                                                                title="Permanently delete record"
+                                                            >
+                                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            ))
+                                        )
+                                    ) : activeTab === 'staff' ? (
+                                        filteredStaff.length === 0 ? (
+                                            <tr><td colSpan="4" className="p-8 text-center text-slate-500 italic">No staff accounts match your filter criteria.</td></tr>
+                                        ) : (
+                                            filteredStaff.map((user) => (
+                                                <tr key={user.id} className="hover:bg-slate-50 transition-colors">
+                                                    <td className="p-4 pl-6">
+                                                        <div className="flex items-center space-x-3">
+                                                            <div className="relative shrink-0">
+                                                                <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs ${
+                                                                    user.is_online 
+                                                                        ? 'bg-emerald-100 text-emerald-800 border-2 border-emerald-300' 
+                                                                        : 'bg-slate-100 text-slate-600 border border-slate-200'
+                                                                }`}>
+                                                                    {(user.name || 'U').split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
+                                                                </div>
+                                                                <span className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-white ${
+                                                                    user.is_online ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'
+                                                                }`} title={user.is_online ? 'Online now' : 'Offline'}></span>
+                                                            </div>
+                                                            <div>
+                                                                <div className="font-bold text-slate-800 flex items-center space-x-2">
+                                                                    <span>{user.name}</span>
+                                                                    {user.department === 'ICT / Admin' && (
+                                                                        <span className="bg-purple-100 text-purple-700 text-[10px] font-bold px-1.5 py-0.2 rounded">ADMIN</span>
+                                                                    )}
+                                                                </div>
+                                                                <div className="text-xs text-slate-400 font-medium">{user.email}</div>
+                                                            </div>
+                                                        </div>
+                                                    </td>
+                                                    <td className="p-4">
+                                                        <span className="bg-slate-100 text-slate-700 text-xs font-bold px-2.5 py-1 rounded border border-slate-200">{user.department}</span>
+                                                    </td>
+                                                    <td className="p-4">
+                                                        {user.is_online ? (
+                                                            <div>
+                                                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse mr-1.5"></span>
+                                                                    Active Now
+                                                                </span>
+                                                                <div className="text-[11px] text-slate-400 mt-1 flex items-center space-x-2">
+                                                                    <span>{user.last_seen_human}</span>
+                                                                    {user.last_ip_address && (
+                                                                        <span className="font-mono text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-500 border border-slate-200">
+                                                                            IP: {user.last_ip_address}
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        ) : (
+                                                            <div>
+                                                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-500 border border-slate-200">
+                                                                    <span className="w-1.5 h-1.5 rounded-full bg-slate-400 mr-1.5"></span>
+                                                                    Offline
+                                                                </span>
+                                                                <div className="text-[11px] text-slate-400 mt-1">
+                                                                    {user.last_seen_at ? `Last active ${user.last_seen_human}` : 'Never logged in'}
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </td>
+                                                    <td className="p-4 pr-6 text-right">
+                                                        <button onClick={() => openEditModal(user)} className="text-teal-600 hover:text-teal-800 font-bold text-xs mr-4 transition-colors">EDIT</button>
+                                                        <button onClick={() => handleDeleteUser(user.id, user.name)} className="text-rose-500 hover:text-rose-700 font-bold text-xs transition-colors disabled:opacity-50" disabled={user.department === 'ICT / Admin'}>DELETE</button>
+                                                    </td>
+                                                </tr>
+                                            ))
+                                        )
                                     ) : (
                                         filteredDepts.length === 0 ? (
                                             <tr><td colSpan="3" className="p-8 text-center text-slate-500 italic">No departments found. Add one to get started.</td></tr>

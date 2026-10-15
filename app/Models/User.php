@@ -23,6 +23,10 @@ class User extends Authenticatable
         'email',
         'password',
         'department',
+        'last_seen_at',
+        'last_login_at',
+        'is_online',
+        'last_ip_address',
     ];
 
     /**
@@ -44,6 +48,9 @@ class User extends Authenticatable
     {
         return [
             'email_verified_at' => 'datetime',
+            'last_seen_at' => 'datetime',
+            'last_login_at' => 'datetime',
+            'is_online' => 'boolean',
             'password' => 'hashed',
         ];
     }
