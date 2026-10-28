@@ -397,6 +397,7 @@ class ClearanceController extends Controller
                 'cardioOrders' => $cardioOrders,
                 'pharmacyOrders' => $pharmacyOrders,
                 'csrOrders' => $csrOrders,
+                'creditOrders' => [],
                 'orOrders' => $orOrders,
                 'lrDrOrders' => $lrDrOrders,
                 'hduOrders' => $hduOrders,
@@ -412,6 +413,7 @@ class ClearanceController extends Controller
             'cardioOrders' => $cardioOrders,
             'pharmacyOrders' => $pharmacyOrders,
             'csrOrders' => $csrOrders,
+            'creditOrders' => [],
             'orOrders' => $orOrders,
             'lrDrOrders' => $lrDrOrders,
             'hduOrders' => $hduOrders,
@@ -470,6 +472,19 @@ class ClearanceController extends Controller
             ]
         );
 
+        // When routing from Outpatient, automatically clear all cost centers except HDU
+        $wardDept = strtolower(trim($request->user()->department ?? ''));
+        $isOutpatientWard = str_contains($wardDept, 'outpatient') || str_contains($wardDept, 'opd') || str_contains($wardDept, 'hemodialysis') || str_contains($wardDept, 'dialysis') || str_contains($wardDept, 'hdu');
+        if ($isOutpatientWard) {
+            $autoDepts = ['Pharmacy', 'Laboratory', 'Radiology', 'Cardio Pulmo', 'CSR'];
+            foreach ($autoDepts as $d) {
+                ClearanceLog::firstOrCreate(
+                    ['enccode' => $request->enccode, 'department' => $d],
+                    ['user_id' => $request->user()->id]
+                );
+            }
+        }
+
         self::recalculateStatus($request->enccode);
 
         return back();
@@ -487,19 +502,38 @@ class ClearanceController extends Controller
             return;
         }
 
-        $requiredDepartments = ['Pharmacy', 'Laboratory', 'Radiology', 'Cardio Pulmo', 'CSR'];
-        
         $wardStr = strtolower(trim($transaction->room_ward ?? ''));
+        $isEr = $wardStr === 'emergency room' || $wardStr === 'er' || str_contains($wardStr, 'emergency');
         $isSurgOrtho = str_contains($wardStr, 'ortho') || str_contains($wardStr, 'surg');
         $isOB = str_contains($wardStr, 'ob');
         $isOutpatient = str_contains($wardStr, 'outpatient') || str_contains($wardStr, 'opd') || str_contains($wardStr, 'hemodialysis') || str_contains($wardStr, 'dialysis') || str_contains($wardStr, 'hdu');
 
-        if ($isSurgOrtho) {
-            $requiredDepartments[] = 'OR';
-        } elseif ($isOB) {
-            $requiredDepartments[] = 'LR/DR';
-        } elseif ($isOutpatient) {
-            $requiredDepartments[] = 'HDU';
+        if ($isOutpatient) {
+            // Outpatient encounters automatically clear from all cost centers except HDU
+            $autoDepts = ['Pharmacy', 'Laboratory', 'Radiology', 'Cardio Pulmo', 'CSR'];
+            $encoderUser = \App\Models\User::where('name', $transaction->encoded_by)->first() ?? \App\Models\User::first();
+            $autoUserId = $encoderUser ? $encoderUser->id : 1;
+            foreach ($autoDepts as $d) {
+                ClearanceLog::firstOrCreate(
+                    ['enccode' => $enccode, 'department' => $d],
+                    ['user_id' => $autoUserId]
+                );
+            }
+            $requiredDepartments = ['Pharmacy', 'Laboratory', 'Radiology', 'Cardio Pulmo', 'CSR', 'HDU'];
+        } else {
+            $requiredDepartments = ['Pharmacy', 'Laboratory', 'Radiology', 'Cardio Pulmo', 'CSR'];
+
+            // Credit and Collection is applicable for admitted patients only and not for ER
+            $isAdmitted = !$isEr;
+            if ($isAdmitted) {
+                $requiredDepartments[] = 'Credit and Collection';
+            }
+
+            if ($isSurgOrtho) {
+                $requiredDepartments[] = 'OR';
+            } elseif ($isOB) {
+                $requiredDepartments[] = 'LR/DR';
+            }
         }
 
         $clearedDepartments = ClearanceLog::where('enccode', $enccode)
@@ -513,6 +547,10 @@ class ClearanceController extends Controller
             $isCleared = false;
             foreach ($clearedDepartments as $cleared) {
                 if ($cleared === $reqUpper) {
+                    $isCleared = true;
+                    break;
+                }
+                if ($reqUpper === 'CREDIT AND COLLECTION' && (str_contains($cleared, 'CREDIT') || str_contains($cleared, 'COLLECTION'))) {
                     $isCleared = true;
                     break;
                 }

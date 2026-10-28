@@ -16,6 +16,9 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
         
         const log = logs.find(l => {
             const d = (l.department || '').trim().toUpperCase();
+            if (target === 'CREDIT AND COLLECTION') {
+                return d.includes('CREDIT') || d.includes('COLLECT');
+            }
             if (target === 'OR') {
                 return d === 'OR' || d === 'OPERATING ROOM' || d === 'OR/LR/DR';
             }
@@ -58,9 +61,21 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
         const wardStr = (transaction?.room_ward || '').toLowerCase();
         const depts = [...base];
         
+        const isEr = wardStr === 'emergency room' || wardStr === 'er' || wardStr.includes('emergency');
+        const isOutpatient = wardStr.includes('outpatient') || wardStr.includes('opd') || wardStr.includes('hemodialysis') || wardStr.includes('dialysis') || wardStr.includes('hdu');
+        const isAdmitted = !isEr && !isOutpatient;
+
+        const hasCreditLog = logs.some(l => {
+            const d = (l.department || '').toUpperCase().trim();
+            return d.includes('CREDIT') || d.includes('COLLECT');
+        });
+
+        if (isAdmitted || hasCreditLog) {
+            depts.push('Credit and Collection');
+        }
+
         const isSurgOrOrtho = wardStr.includes('ortho') || wardStr.includes('surg');
         const isOB = wardStr.includes('ob');
-        const isOutpatient = wardStr.includes('outpatient') || wardStr.includes('opd') || wardStr.includes('hemodialysis') || wardStr.includes('dialysis') || wardStr.includes('hdu');
         
         const hasOrLog = logs.some(l => {
             const d = (l.department || '').toUpperCase().trim();

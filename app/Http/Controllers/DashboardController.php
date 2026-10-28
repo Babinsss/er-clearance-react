@@ -12,7 +12,7 @@ class DashboardController extends Controller
     public function index(Request $request)
     {
         $user = auth()->user();
-        $costCenters = ['Laboratory', 'Radiology', 'Pharmacy', 'Cardiopulmonary', 'CSR'];
+        $costCenters = ['Laboratory', 'Radiology', 'Pharmacy', 'Cardiopulmonary', 'CSR', 'Cardio Pulmo', 'OR', 'LR/DR', 'HDU', 'Credit and Collection', 'Credit & Collection'];
 
         // Automatically route to the correct engine based on the user's role
         if (in_array($user->department, $costCenters)) {

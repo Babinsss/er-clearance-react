@@ -2,12 +2,18 @@ import React, { useState, useEffect } from 'react';
 import { Head, router, Link, usePage } from '@inertiajs/react';
 import PortalLayout from '@/Layouts/PortalLayout';
 
-export default function Index({ enccode, labOrders = [], cardioOrders = [], radioOrders = [], pharmacyOrders = [], clearedDepartments = [] }) {
+export default function Index({ enccode, transaction = {}, labOrders = [], cardioOrders = [], radioOrders = [], pharmacyOrders = [], creditOrders = [], clearedDepartments = [] }) {
     const { auth } = usePage().props;
     const userDept = auth.user.department;
     
-    const costCenters = ['Laboratory', 'Radiology', 'Pharmacy', 'Cardiopulmonary', 'CSR', 'OR', 'LR/DR', 'HDU'];
+    const costCenters = ['Laboratory', 'Radiology', 'Pharmacy', 'Cardiopulmonary', 'CSR', 'OR', 'LR/DR', 'HDU', 'Credit and Collection'];
     const isCostCenter = costCenters.includes(userDept);
+
+    const wardStr = (transaction?.room_ward || '').toLowerCase();
+    const isEr = wardStr === 'emergency room' || wardStr === 'er' || wardStr.includes('emergency');
+    const isOutpatient = wardStr.includes('outpatient') || wardStr.includes('opd') || wardStr.includes('hemodialysis') || wardStr.includes('dialysis') || wardStr.includes('hdu');
+    const isAdmitted = !isEr && !isOutpatient;
+    const totalRequired = isAdmitted ? 6 : 5;
 
     const [isLabReady, setIsLabReady] = useState(false);
     const [isCardioReady, setIsCardioReady] = useState(false);
@@ -75,6 +81,7 @@ export default function Index({ enccode, labOrders = [], cardioOrders = [], radi
             red: 'text-rose-700 bg-rose-50 border-rose-200 hover:bg-rose-600 focus:ring-rose-500',
             teal: 'text-teal-700 bg-teal-50 border-teal-200 hover:bg-teal-600 focus:ring-teal-500',
             orange: 'text-orange-700 bg-orange-50 border-orange-200 hover:bg-orange-600 focus:ring-orange-500',
+            indigo: 'text-indigo-700 bg-indigo-50 border-indigo-200 hover:bg-indigo-600 focus:ring-indigo-500',
         };
         const activeTheme = themes[colorTheme];
         const textColor = activeTheme.split(' ')[0];
@@ -152,6 +159,7 @@ export default function Index({ enccode, labOrders = [], cardioOrders = [], radi
         cardio: <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" /></svg>,
         pharmacy: <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>, 
         csr: <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" /></svg>,
+        credit: <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg>,
     };
 
     return (
@@ -244,7 +252,7 @@ export default function Index({ enccode, labOrders = [], cardioOrders = [], radi
                             {!isCostCenter && (
                                 <div className="mt-4 md:mt-0 flex items-center space-x-2 bg-slate-100 px-4 py-2 rounded-lg border border-slate-200">
                                     <span className="text-sm font-bold text-slate-700">Overall Progress:</span>
-                                    <span className="text-lg font-black text-teal-600">{clearedDepartments.length} / 5</span>
+                                    <span className="text-lg font-black text-teal-600">{clearedDepartments.length} / {totalRequired}</span>
                                 </div>
                             )}
                         </div>
@@ -270,6 +278,10 @@ export default function Index({ enccode, labOrders = [], cardioOrders = [], radi
 
                     {(!isCostCenter || userDept === 'CSR') && (
                         <DepartmentCard title="CSR" icon={icons.csr} colorTheme="orange" isReady={true} orders={[]} onClear={openConfirm} />
+                    )}
+
+                    {((!isCostCenter && isAdmitted) || userDept === 'Credit and Collection') && (
+                        <DepartmentCard title="Credit and Collection" icon={icons.credit} colorTheme="indigo" isReady={true} orders={creditOrders} onClear={openConfirm} />
                     )}
                 </div>
             </div>

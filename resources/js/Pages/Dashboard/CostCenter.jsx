@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Head, router } from '@inertiajs/react';
 import PortalLayout from '@/Layouts/PortalLayout';
 import axios from 'axios';
+import PromissoryMasterlist from '@/Components/PromissoryMasterlist';
 
 export default function CostCenter({ department, pendingPatients = [], historyPatients = [] }) {
     const [searchTerm, setSearchTerm] = useState('');
@@ -16,6 +17,9 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
     
     const [isConfirmOpen, setIsConfirmOpen] = useState(false);
     const [isClearing, setIsClearing] = useState(false);
+    const [patientCreditStatus, setPatientCreditStatus] = useState(null);
+    const [isCheckingCredit, setIsCheckingCredit] = useState(false);
+    const isCreditDept = (department || '').toLowerCase().includes('credit') || (department || '').toLowerCase().includes('collect');
 
     const previousQueueCount = useRef(pendingPatients.length);
     const warnedPatients = useRef([]); 
@@ -99,6 +103,21 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                 }
             });
             setModalData(response.data);
+            setPatientCreditStatus(null);
+            if (isCreditDept) {
+                const patName = response.data.transaction?.patient_name || response.data.patient_name || '';
+                if (patName) {
+                    setIsCheckingCredit(true);
+                    try {
+                        const creditRes = await axios.get(`/credit-promissory/check-patient?name=${encodeURIComponent(patName)}`);
+                        setPatientCreditStatus(creditRes.data);
+                    } catch (err) {
+                        console.error('Failed to check patient credit records', err);
+                    } finally {
+                        setIsCheckingCredit(false);
+                    }
+                }
+            }
         } catch (error) {
             console.error("Failed to load clearance data", error);
             setToastMessage("Failed to load records from iHomis. Please try again.");
@@ -127,6 +146,7 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
         else if (dept === 'or' || dept.includes('operating')) orders = data.orOrders || [];
         else if (dept.includes('lr') || dept.includes('dr') || dept.includes('delivery')) orders = data.lrDrOrders || [];
         else if (dept.includes('hdu') || dept.includes('ckd') || dept.includes('dialysis')) orders = data.hduOrders || data.ckdOrders || [];
+        else if (dept.includes('credit') || dept.includes('collect')) orders = data.creditOrders || [];
         
         return Array.isArray(orders) ? orders : [];
     };
@@ -200,10 +220,25 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                             <span>Completed History</span>
                         </button>
+
+                        {isCreditDept && (
+                            <button onClick={() => setActiveModule('promissory')} className={`w-full flex items-center justify-between px-4 py-3 rounded-lg text-sm font-bold transition-all ${activeModule === 'promissory' ? 'bg-teal-50 text-teal-700 border-l-4 border-teal-500 shadow-sm' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 border-l-4 border-transparent'}`}>
+                                <div className="flex items-center space-x-3">
+                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                    <span>Promissory & Balances</span>
+                                </div>
+                                <span className="bg-slate-200 text-slate-700 text-[10px] px-2 py-0.5 rounded-full font-bold">57k+</span>
+                            </button>
+                        )}
                     </nav>
                 </div>
 
                 {/* MAIN CONTENT AREA */}
+                {activeModule === 'promissory' ? (
+                    <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 p-6 flex flex-col overflow-y-auto">
+                        <PromissoryMasterlist />
+                    </div>
+                ) : (
                 <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col overflow-hidden relative">
                     <div className="px-6 py-5 border-b border-slate-200 bg-slate-50 flex flex-col md:flex-row justify-between items-center gap-4 shrink-0">
                         <h3 className="text-lg font-bold text-slate-800">
@@ -256,6 +291,13 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                                                     </td>
 
                                                     <td className="p-4 text-slate-600 text-xs">
+                                                        {patient.ward && (
+                                                            <div className="mb-1">
+                                                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-teal-50 text-teal-700 border border-teal-200">
+                                                                    {patient.ward}
+                                                                </span>
+                                                            </div>
+                                                        )}
                                                         {activeModule === 'pending' ? (
                                                             <>Requested: <span className="font-bold">{new Date(patient.date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</span></>
                                                         ) : (
@@ -301,6 +343,7 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                         </div>
                     </div>
                 </div>
+                )}
             </div>
 
             {/* --- INSPECTION MODAL --- */}
@@ -379,6 +422,67 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                                         </button>
                                     </div>
                                     
+                                    {/* --- CREDIT & PROMISSORY STATUS CARD --- */}
+                                    {isCreditDept && (
+                                        <div className="p-4 bg-white border-b border-slate-200">
+                                            <div className="flex justify-between items-center mb-2">
+                                                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Promissory Note & Financial Balance Check</span>
+                                                {isCheckingCredit && (
+                                                    <span className="text-xs text-teal-600 font-bold flex items-center gap-1">
+                                                        <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                                        Checking masterlist records...
+                                                    </span>
+                                                )}
+                                            </div>
+
+                                            {patientCreditStatus?.has_balance ? (
+                                                <div className="bg-rose-50 border-2 border-rose-300 rounded-lg p-3 text-rose-900">
+                                                    <div className="flex items-center justify-between">
+                                                        <div className="flex items-center space-x-2">
+                                                            <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping"></span>
+                                                            <span className="font-black text-sm uppercase text-rose-800">
+                                                                Outstanding Promissory Note / Balance: ₱{patientCreditStatus.total_balance?.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                                                            </span>
+                                                        </div>
+                                                        <span className="bg-rose-600 text-white font-bold text-[10px] px-2 py-0.5 rounded-full uppercase">Action Required</span>
+                                                    </div>
+                                                    <div className="mt-1 text-xs text-rose-700 font-medium">
+                                                        This patient has active promissory note(s) or an unsettled balance on record. Review the notes below before clearing.
+                                                    </div>
+                                                    <div className="mt-2.5 divide-y divide-rose-200 border-t border-rose-200 pt-2 text-xs">
+                                                        {patientCreditStatus.records?.map((rec, i) => (
+                                                            <div key={i} className="py-1.5 flex justify-between items-start">
+                                                                <div>
+                                                                    <span className="font-bold text-slate-800">{rec.sheet_category}</span>
+                                                                    {rec.entry_date && <span className="text-slate-500 ml-2">({new Date(rec.entry_date).toLocaleDateString()})</span>}
+                                                                    {rec.guarantor_name && <span className="text-indigo-700 ml-2 font-bold">• Guarantor: {rec.guarantor_name}</span>}
+                                                                    {rec.remarks && <p className="text-slate-600 text-[11px] mt-0.5 italic">{rec.remarks}</p>}
+                                                                </div>
+                                                                <div className="text-right font-mono font-bold text-rose-700">
+                                                                    ₱{rec.remaining_balance?.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            ) : patientCreditStatus?.has_records ? (
+                                                <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-emerald-900 flex items-center space-x-2">
+                                                    <svg className="w-5 h-5 text-emerald-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                                    <div className="text-xs">
+                                                        <span className="font-bold">Prior Records Found:</span> All past promissory notes and hospital balances for this patient have been <strong>Fully Settled (₱0.00 balance)</strong>.
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-slate-600 flex items-center space-x-2">
+                                                    <svg className="w-5 h-5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                                    <div className="text-xs font-medium">
+                                                        No active promissory notes or remaining balances found in the masterlist database for this patient name.
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
                                     {/* --- ER ALERTS BANNER --- */}
                                     {(Boolean(modalData?.transaction?.is_oecb) || (Boolean(modalData?.transaction?.has_oxygen) && department === 'Cardio Pulmo')) ? (
                                         <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col gap-2">
@@ -409,8 +513,16 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                                                 <div className="bg-white p-3 rounded-full shadow-sm border border-slate-100 mb-3">
                                                     <svg className="w-8 h-8 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
                                                 </div>
-                                                <span className="text-slate-600 font-bold text-sm">No Records Found</span>
-                                                <p className="text-xs text-slate-400 mt-1 font-medium">There are no active {department} orders for this encounter.</p>
+                                                <span className="text-slate-600 font-bold text-sm">
+                                                    {department?.toLowerCase().includes('credit') || department?.toLowerCase().includes('collect') 
+                                                        ? 'Account Verification Required' 
+                                                        : 'No Records Found'}
+                                                </span>
+                                                <p className="text-xs text-slate-400 mt-1 font-medium">
+                                                    {department?.toLowerCase().includes('credit') || department?.toLowerCase().includes('collect')
+                                                        ? 'Verify patient promissory notes, account balance, or PhilHealth before clearing.'
+                                                        : `There are no active ${department} orders for this encounter.`}
+                                                </p>
                                             </div>
                                         ) : (
                                             getActiveOrders().map((item, idx) => (

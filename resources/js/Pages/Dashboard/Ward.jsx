@@ -30,17 +30,24 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
     const getRequiredDepartments = (wardStr) => {
         const base = ['Pharmacy', 'Laboratory', 'Radiology', 'Cardio Pulmo', 'CSR'];
         const ward = (wardStr || '').toLowerCase();
+        const isEr = ward === 'emergency room' || ward === 'er' || ward.includes('emergency');
+        const isOutpatient = ward.includes('outpatient') || ward.includes('opd') || ward.includes('hemodialysis') || ward.includes('dialysis') || ward.includes('hdu');
+        const isAdmitted = !isEr && !isOutpatient;
+
+        const depts = [...base];
+
+        if (isAdmitted) {
+            depts.push('Credit and Collection');
+        }
         
         if (ward.includes('ortho') || ward.includes('surg')) {
-            return [...base, 'OR'];
+            depts.push('OR');
+        } else if (ward.includes('ob')) {
+            depts.push('LR/DR');
+        } else if (isOutpatient) {
+            depts.push('HDU');
         }
-        if (ward.includes('ob')) {
-            return [...base, 'LR/DR'];
-        }
-        if (ward.includes('outpatient') || ward.includes('opd') || ward.includes('hemodialysis') || ward.includes('dialysis') || ward.includes('hdu')) {
-            return [...base, 'HDU'];
-        }
-        return base;
+        return depts;
     };
 
     useEffect(() => {
@@ -417,6 +424,7 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                                                     const cleanD = (d || '').toUpperCase().trim();
                                                     const cleanTarget = dept.toUpperCase().trim();
                                                     if (cleanD === cleanTarget) return true;
+                                                    if (cleanTarget === 'CREDIT AND COLLECTION' && (cleanD.includes('CREDIT') || cleanD.includes('COLLECT'))) return true;
                                                     if (cleanTarget === 'OR' && (cleanD === 'OR/LR/DR' || cleanD === 'OPERATING ROOM')) return true;
                                                     if (cleanTarget === 'LR/DR' && (cleanD === 'OR/LR/DR' || cleanD === 'LR / DR' || cleanD === 'LR' || cleanD === 'DR' || cleanD === 'DELIVERY ROOM')) return true;
                                                     if (cleanTarget === 'HDU' && (cleanD === 'HDU' || cleanD === 'CKD' || cleanD === 'DIALYSIS' || cleanD === 'DIALYSIS UNIT' || cleanD === 'HEMODIALYSIS')) return true;

@@ -3,6 +3,7 @@
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ClearanceController;
 use App\Http\Controllers\AdminController;
+use App\Http\Controllers\CreditPromissoryController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\DB;
@@ -57,7 +58,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
         // --- 2. LIVE COST CENTER QUEUE LOGIC ---
         $deptRecord = \App\Models\Department::where('name', $user->department)->first();
-        $costCenters = ['Laboratory', 'Radiology', 'Pharmacy', 'Cardiopulmonary', 'CSR', 'Cardio Pulmo', 'OR', 'LR/DR', 'LR / DR', 'HDU', 'Operating Room', 'Delivery Room', 'Dialysis'];
+        $costCenters = ['Laboratory', 'Radiology', 'Pharmacy', 'Cardiopulmonary', 'CSR', 'Cardio Pulmo', 'OR', 'LR/DR', 'LR / DR', 'HDU', 'Operating Room', 'Delivery Room', 'Dialysis', 'Credit and Collection', 'Credit & Collection'];
 
         if (($deptRecord && $deptRecord->category === 'Cost Center') || in_array($user->department, $costCenters)) {
             
@@ -113,6 +114,21 @@ Route::middleware(['auth', 'verified'])->group(function () {
                         $q->orWhere('room_ward', 'like', "%{$w}%");
                     }
                 });
+            } elseif (str_contains($deptUpper, 'CREDIT') || str_contains($deptUpper, 'COLLECT')) {
+                // Credit and Collection: applicable for admitted patients only and not for ER
+                $nonAdmittedWards = ['Emergency Room', 'ER', 'Emergency', 'Outpatient', 'OPD'];
+                $activeQuery->where(function($q) use ($nonAdmittedWards) {
+                    $q->whereNotNull('room_ward');
+                    foreach ($nonAdmittedWards as $w) {
+                        $q->where('room_ward', 'not like', "%{$w}%");
+                    }
+                });
+                $completedQuery->where(function($q) use ($nonAdmittedWards) {
+                    $q->whereNotNull('room_ward');
+                    foreach ($nonAdmittedWards as $w) {
+                        $q->where('room_ward', 'not like', "%{$w}%");
+                    }
+                });
             }
 
             $activeTransactions = $activeQuery->orderBy('created_at', 'desc')->get();
@@ -121,6 +137,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
                 return [
                     'enccode' => $txn->enccode,
                     'name' => $txn->patient_name,
+                    'ward' => $txn->room_ward,
                     'status' => $txn->overall_status,
                     'date' => $txn->created_at->toIso8601String() 
                 ];
@@ -134,6 +151,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
                 return [
                     'enccode' => $txn->enccode,
                     'name' => $txn->patient_name,
+                    'ward' => $txn->room_ward,
                     'overall_status' => $txn->overall_status,
                     'cleared_date' => $myClearedLogs[$txn->enccode]->created_at->toIso8601String()
                 ];
@@ -269,6 +287,13 @@ Route::middleware(['auth', 'verified'])->group(function () {
             'logs' => $logs
         ]);
     })->name('clearance.print');
+
+    // --- CREDIT & COLLECTION PROMISSORY NOTES API ROUTES ---
+    Route::get('/credit-promissory/notes', [CreditPromissoryController::class, 'index'])->name('credit.notes.index');
+    Route::get('/credit-promissory/check-patient', [CreditPromissoryController::class, 'checkPatient'])->name('credit.notes.check');
+    Route::post('/credit-promissory/notes', [CreditPromissoryController::class, 'store'])->name('credit.notes.store');
+    Route::put('/credit-promissory/notes/{id}', [CreditPromissoryController::class, 'update'])->name('credit.notes.update');
+    Route::delete('/credit-promissory/notes/{id}', [CreditPromissoryController::class, 'destroy'])->name('credit.notes.destroy');
 
 }); 
 

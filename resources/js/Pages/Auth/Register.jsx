@@ -166,6 +166,7 @@ export default function Register({ departments = [] }) {
                                         <option value="Pharmacy">Pharmacy</option>
                                         <option value="Cardiopulmonary">Cardiopulmonary</option>
                                         <option value="CSR">CSR</option>
+                                        <option value="Credit and Collection">Credit and Collection</option>
                                     </>
                                 )}
                             </select>
