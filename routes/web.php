@@ -3,6 +3,7 @@
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ClearanceController;
 use App\Http\Controllers\AdminController;
+use App\Http\Controllers\SupervisorController;
 use App\Http\Controllers\CreditPromissoryController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
@@ -32,6 +33,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
         // --- 0. ICT / ADMIN LOGIC ---
         if ($user->department === 'ICT / Admin') {
             return redirect()->route('admin.index');
+        }
+
+        // --- 0.1 SUPERVISOR LOGIC ---
+        if ($user->department === 'Supervisor' || str_contains(strtolower($user->department), 'supervisor')) {
+            return redirect()->route('supervisor.index');
         }
         
         // --- 1. BILLING & CLAIMS LOGIC ---
@@ -248,9 +254,16 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::put('/admin/departments/{id}', [AdminController::class, 'updateDepartment'])->name('admin.departments.update');
     Route::delete('/admin/departments/{id}', [AdminController::class, 'deleteDepartment'])->name('admin.departments.destroy');
 
+    Route::put('/admin/transactions/{id}', [AdminController::class, 'updateTransaction'])->name('admin.transactions.update');
     Route::post('/admin/transactions/{id}/cancel', [AdminController::class, 'cancelTransaction'])->name('admin.transactions.cancel');
     Route::post('/admin/transactions/{id}/reactivate', [AdminController::class, 'reactivateTransaction'])->name('admin.transactions.reactivate');
     Route::delete('/admin/transactions/{id}', [AdminController::class, 'deleteTransaction'])->name('admin.transactions.destroy');
+
+    // --- SUPERVISOR ROUTES ---
+    Route::get('/supervisor', [SupervisorController::class, 'index'])->name('supervisor.index');
+    Route::put('/supervisor/transactions/{id}', [SupervisorController::class, 'updateTransaction'])->name('supervisor.transactions.update');
+    Route::post('/supervisor/transactions/{id}/cancel', [SupervisorController::class, 'cancelTransaction'])->name('supervisor.transactions.cancel');
+    Route::post('/supervisor/transactions/{id}/reactivate', [SupervisorController::class, 'reactivateTransaction'])->name('supervisor.transactions.reactivate');
 
     // --- CLEARANCE ROUTES ---
     Route::post('/transactions', [ClearanceController::class, 'storeTransaction'])->name('transactions.store');
@@ -288,8 +301,15 @@ Route::middleware(['auth', 'verified'])->group(function () {
         ]);
     })->name('clearance.print');
 
-    // --- CREDIT & COLLECTION PROMISSORY NOTES API ROUTES ---
+    // --- CREDIT & COLLECTION PROMISSORY NOTES & REPORTS API ROUTES ---
     Route::get('/credit-promissory/notes', [CreditPromissoryController::class, 'index'])->name('credit.notes.index');
+    Route::get('/credit-promissory/grantors', [CreditPromissoryController::class, 'grantors'])->name('credit.grantors.index');
+    Route::get('/credit-promissory/grantor-patients', [CreditPromissoryController::class, 'grantorPatients'])->name('credit.grantor.patients');
+    Route::get('/credit-promissory/nbb-patients', [CreditPromissoryController::class, 'nbbPatients'])->name('credit.nbb.patients');
+    Route::post('/credit-promissory/grantors', [CreditPromissoryController::class, 'storeGrantor'])->name('credit.grantors.store');
+    Route::put('/credit-promissory/grantors/{id}', [CreditPromissoryController::class, 'updateGrantor'])->name('credit.grantors.update');
+    Route::delete('/credit-promissory/grantors/{id}', [CreditPromissoryController::class, 'destroyGrantor'])->name('credit.grantors.destroy');
+    Route::get('/credit-promissory/reports', [CreditPromissoryController::class, 'reports'])->name('credit.reports.index');
     Route::get('/credit-promissory/check-patient', [CreditPromissoryController::class, 'checkPatient'])->name('credit.notes.check');
     Route::post('/credit-promissory/notes', [CreditPromissoryController::class, 'store'])->name('credit.notes.store');
     Route::put('/credit-promissory/notes/{id}', [CreditPromissoryController::class, 'update'])->name('credit.notes.update');

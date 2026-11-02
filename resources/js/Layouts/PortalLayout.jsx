@@ -42,6 +42,12 @@ export default function PortalLayout({ children }) {
                     <Link href="/dashboard" className="text-sm font-bold text-white hover:text-teal-400 transition-colors">
                         Dashboard
                     </Link>
+
+                    {auth?.user?.department === 'ICT / Admin' && (
+                        <Link href="/supervisor" className="text-sm font-bold text-slate-300 hover:text-teal-400 transition-colors">
+                            Supervisor View
+                        </Link>
+                    )}
                     
                     <div className="flex items-center space-x-3">
                         {/* User Badge */}

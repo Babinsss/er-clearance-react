@@ -177,6 +177,69 @@ class AdminController extends Controller
     }
 
     // --- ROUTED PATIENT MANAGEMENT ---
+    public function updateTransaction(Request $request, $id)
+    {
+        if ($request->user()->department !== 'ICT / Admin') abort(403);
+
+        $validated = $request->validate([
+            'hospital_number' => 'required|string|max:255',
+            'patient_name' => 'required|string|max:255',
+            'room_ward' => 'required|string|max:255',
+            'arrival_datetime' => 'nullable|string',
+            'disposition' => 'nullable|string|max:255',
+            'overall_status' => 'required|string|in:Routing in Progress,Cleared,Cancelled,Archived',
+            'is_oecb' => 'nullable|boolean',
+            'has_oxygen' => 'nullable|boolean',
+            'oxygen_remarks' => 'nullable|string',
+        ]);
+
+        $tx = \App\Models\ClearanceTransaction::findOrFail($id);
+
+        $arrival = !empty($validated['arrival_datetime'])
+            ? date('Y-m-d H:i:s', strtotime($validated['arrival_datetime']))
+            : null;
+
+        $newStatus = $validated['overall_status'];
+
+        $tx->update([
+            'hospital_number' => $validated['hospital_number'],
+            'patient_name' => $validated['patient_name'],
+            'room_ward' => $validated['room_ward'],
+            'arrival_datetime' => $arrival,
+            'disposition' => $validated['disposition'],
+            'overall_status' => $newStatus,
+            'is_oecb' => (bool) ($validated['is_oecb'] ?? false),
+            'has_oxygen' => (bool) ($validated['has_oxygen'] ?? false),
+            'oxygen_remarks' => ($validated['has_oxygen'] ?? false) ? $validated['oxygen_remarks'] : null,
+        ]);
+
+        // When room_ward is changed to an Outpatient ward, auto-clear standard departments
+        $wardDept = strtolower(trim($validated['room_ward']));
+        $isOutpatientWard = str_contains($wardDept, 'outpatient') || 
+                            str_contains($wardDept, 'opd') || 
+                            str_contains($wardDept, 'hemodialysis') || 
+                            str_contains($wardDept, 'dialysis') || 
+                            str_contains($wardDept, 'hdu');
+
+        if ($isOutpatientWard) {
+            $autoDepts = ['Pharmacy', 'Laboratory', 'Radiology', 'Cardio Pulmo', 'CSR'];
+            foreach ($autoDepts as $d) {
+                ClearanceLog::firstOrCreate(
+                    ['enccode' => $tx->enccode, 'department' => $d],
+                    ['user_id' => $request->user()->id]
+                );
+            }
+        }
+
+        if ($newStatus === 'Cancelled') {
+            ClearanceLog::where('enccode', $tx->enccode)->delete();
+        } elseif ($newStatus !== 'Archived') {
+            \App\Http\Controllers\ClearanceController::recalculateStatus($tx->enccode);
+        }
+
+        return back();
+    }
+
     public function cancelTransaction(Request $request, $id)
     {
         if ($request->user()->department !== 'ICT / Admin') abort(403);

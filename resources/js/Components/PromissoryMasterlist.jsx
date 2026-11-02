@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
 
-export default function PromissoryMasterlist({ onSelectPatient = null, initialPatientName = '' }) {
+export default function PromissoryMasterlist({ onSelectPatient = null, initialPatientName = '', onOpenReports = null }) {
     const [notes, setNotes] = useState([]);
     const [stats, setStats] = useState({
         total_count: 0,
@@ -11,6 +11,45 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
         total_absconded_count: 0
     });
     const [categories, setCategories] = useState([]);
+    
+    // Standard 80 SAA Grantors from Database
+    const [grantorsList, setGrantorsList] = useState([]);
+
+    useEffect(() => {
+        axios.get('/credit-promissory/grantors')
+            .then(res => setGrantorsList(res.data.grantors || []))
+            .catch(err => console.error('Failed to load grantors', err));
+    }, []);
+
+    const grantorsByCategory = useMemo(() => {
+        const grouped = {};
+        grantorsList.forEach(g => {
+            const cat = g.category || 'Other';
+            if (!grouped[cat]) grouped[cat] = [];
+            grouped[cat].push(g);
+        });
+        return grouped;
+    }, [grantorsList]);
+
+    const getGrantorDetails = (grantorStr) => {
+        if (!grantorStr || !grantorsList.length) return null;
+        const str = grantorStr.trim().toUpperCase();
+        return grantorsList.find(g => {
+            const code = (g.code || '').trim().toUpperCase();
+            const prop = (g.proponent || '').trim().toUpperCase();
+            const fullCombo = `[${code}] ${prop}`;
+            return str === fullCombo || str === prop || str === code || str.includes(prop) || (code && str.includes(`[${code}]`));
+        });
+    };
+
+    const isGrantorInList = (val) => {
+        if (!val || !grantorsList.length) return false;
+        const clean = val.trim().toUpperCase();
+        return grantorsList.some(item => {
+            const fullCombo = `[${item.code}] ${item.proponent}`.toUpperCase();
+            return clean === fullCombo || clean === (item.proponent || '').toUpperCase() || clean === (item.code || '').toUpperCase();
+        });
+    };
     
     // Filters
     const [search, setSearch] = useState(initialPatientName || '');
@@ -46,6 +85,9 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
         is_non_nbb: false,
         fa_amount: '',
         fa_grantor: '',
+        fa_grantors: [
+            { grantor: '', amount: '' }
+        ],
         fa_date: '',
         cash_paid: '',
         or_number: '',
@@ -112,6 +154,22 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
 
     const handleOpenEdit = (note) => {
         setEditingNote(note);
+
+        let initialGrantors = [{ grantor: '', amount: '', isCustom: false }];
+        if (note.fa_grantors && Array.isArray(note.fa_grantors) && note.fa_grantors.length > 0) {
+            initialGrantors = note.fa_grantors.map(g => ({
+                grantor: g.grantor || '',
+                amount: g.amount ?? '',
+                isCustom: g.grantor ? !isGrantorInList(g.grantor) : false
+            }));
+        } else if (note.fa_grantor) {
+            initialGrantors = [{
+                grantor: note.fa_grantor,
+                amount: note.fa_amount || '',
+                isCustom: note.fa_grantor ? !isGrantorInList(note.fa_grantor) : false
+            }];
+        }
+
         setForm({
             sheet_category: note.sheet_category || 'daily trans  2026',
             entry_date: note.entry_date ? note.entry_date.split('T')[0] : '',
@@ -129,6 +187,7 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
             is_non_nbb: Boolean(note.is_non_nbb),
             fa_amount: note.fa_amount || '',
             fa_grantor: note.fa_grantor || '',
+            fa_grantors: initialGrantors,
             fa_date: note.fa_date ? note.fa_date.split('T')[0] : '',
             cash_paid: note.cash_paid || '',
             or_number: note.or_number || '',
@@ -141,11 +200,255 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
         setIsEditModalOpen(true);
     };
 
+    const handleGrantorChange = (index, field, value) => {
+        const updated = [...(form.fa_grantors && form.fa_grantors.length > 0 ? form.fa_grantors : [{ grantor: '', amount: '' }])];
+        updated[index] = {
+            ...updated[index],
+            [field]: value
+        };
+
+        const totalFa = updated.reduce((sum, g) => sum + (parseFloat(g.amount) || 0), 0);
+        const summaryParts = updated
+            .filter(g => g.grantor && g.grantor.trim())
+            .map(g => {
+                const amt = parseFloat(g.amount) || 0;
+                return amt > 0 
+                    ? `${g.grantor.trim()} (₱${amt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`
+                    : g.grantor.trim();
+            });
+
+        const bill = parseFloat(form.hospital_bill_balance) || 0;
+        const pn = parseFloat(form.pn_amount) || 0;
+        const cashPaid = parseFloat(form.cash_paid) || 0;
+        const discount = parseFloat(form.discount) || 0;
+        let newRem = 0;
+        if (bill > 0) {
+            newRem = Math.max(0, Number((bill - totalFa - pn - cashPaid - discount).toFixed(2)));
+        } else if (pn > 0) {
+            newRem = Math.max(0, Number((pn - totalFa - cashPaid - discount).toFixed(2)));
+        }
+
+        setForm({
+            ...form,
+            fa_grantors: updated,
+            fa_amount: totalFa > 0 ? totalFa : '',
+            fa_grantor: summaryParts.join(' / '),
+            remaining_balance: (bill > 0 || pn > 0) ? newRem : form.remaining_balance
+        });
+    };
+
+    const handleAddGrantor = () => {
+        setForm({
+            ...form,
+            fa_grantors: [...(form.fa_grantors || []), { grantor: '', amount: '', isCustom: false }]
+        });
+    };
+
+    const handleRemoveGrantor = (index) => {
+        const current = form.fa_grantors || [];
+        if (current.length <= 1) {
+            handleGrantorChange(0, 'grantor', '');
+            handleGrantorChange(0, 'amount', '');
+            return;
+        }
+        const updated = current.filter((_, idx) => idx !== index);
+        const totalFa = updated.reduce((sum, g) => sum + (parseFloat(g.amount) || 0), 0);
+        const summaryParts = updated
+            .filter(g => g.grantor && g.grantor.trim())
+            .map(g => {
+                const amt = parseFloat(g.amount) || 0;
+                return amt > 0 
+                    ? `${g.grantor.trim()} (₱${amt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`
+                    : g.grantor.trim();
+            });
+
+        const bill = parseFloat(form.hospital_bill_balance) || 0;
+        const pn = parseFloat(form.pn_amount) || 0;
+        const cashPaid = parseFloat(form.cash_paid) || 0;
+        const discount = parseFloat(form.discount) || 0;
+        let newRem = 0;
+        if (bill > 0) {
+            newRem = Math.max(0, Number((bill - totalFa - pn - cashPaid - discount).toFixed(2)));
+        } else if (pn > 0) {
+            newRem = Math.max(0, Number((pn - totalFa - cashPaid - discount).toFixed(2)));
+        }
+
+        setForm({
+            ...form,
+            fa_grantors: updated,
+            fa_amount: totalFa > 0 ? totalFa : '',
+            fa_grantor: summaryParts.join(' / '),
+            remaining_balance: (bill > 0 || pn > 0) ? newRem : form.remaining_balance
+        });
+    };
+
+    const renderGrantorRow = (g, idx) => {
+        const matched = getGrantorDetails(g.grantor);
+        const isCustom = g.isCustom ?? (g.grantor ? !isGrantorInList(g.grantor) : false);
+
+        return (
+            <div key={idx} className="bg-white p-3 rounded-xl border border-teal-100 shadow-sm space-y-2 animate-in fade-in">
+                <div className="flex items-start gap-2">
+                    <div className="w-6 h-6 rounded-full bg-teal-100 text-teal-800 font-black text-[11px] flex items-center justify-center shrink-0 mt-6">
+                        {idx + 1}
+                    </div>
+
+                    <div className="flex-1">
+                        <div className="flex justify-between items-center mb-1">
+                            <label className="block text-[10px] text-slate-500 uppercase font-black tracking-wider">
+                                Grantor / Sponsor #{idx + 1}
+                            </label>
+                            <div className="flex items-center space-x-2">
+                                {onOpenReports && (
+                                    <button
+                                        type="button"
+                                        onClick={onOpenReports}
+                                        className="text-[10px] text-emerald-600 hover:text-emerald-800 font-bold"
+                                        title="Encode or view SAA funds in Reports"
+                                    >
+                                        + Encode SAA
+                                    </button>
+                                )}
+                                <button
+                                    type="button"
+                                    onClick={() => handleGrantorChange(idx, 'isCustom', !isCustom)}
+                                    className="text-[10px] text-teal-600 hover:text-teal-800 font-bold underline"
+                                >
+                                    {isCustom ? '← Select from SAA List' : '✍️ Type Custom'}
+                                </button>
+                            </div>
+                        </div>
+
+                        {isCustom ? (
+                            <input
+                                type="text"
+                                value={g.grantor || ''}
+                                onChange={e => handleGrantorChange(idx, 'grantor', e.target.value)}
+                                placeholder="Type custom sponsor (e.g. MAYOR / CHARITY / EMBASSY)..."
+                                className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs uppercase font-semibold text-slate-800 focus:ring-1 focus:ring-teal-500"
+                            />
+                        ) : (
+                            <select
+                                value={g.grantor || ''}
+                                onChange={e => {
+                                    if (e.target.value === '__custom__') {
+                                        handleGrantorChange(idx, 'isCustom', true);
+                                        handleGrantorChange(idx, 'grantor', '');
+                                    } else {
+                                        handleGrantorChange(idx, 'grantor', e.target.value);
+                                    }
+                                }}
+                                className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-800 font-bold focus:ring-1 focus:ring-teal-500"
+                            >
+                                <option value="">-- Choose Sponsor ({grantorsList.length} Available) --</option>
+                                {Object.keys(grantorsByCategory).map(cat => (
+                                    <optgroup key={cat} label={`=== ${cat.toUpperCase()} ===`}>
+                                        {grantorsByCategory[cat].map(item => {
+                                            const val = item.code ? `[${item.code}] ${item.proponent}` : item.proponent;
+                                            const saaText = item.saa_number ? ` • SAA #${item.saa_number}` : '';
+                                            const budgetText = item.allocated_budget > 0 ? ` (₱${(item.allocated_budget).toLocaleString()})` : '';
+                                            return (
+                                                <option key={item.id} value={val}>
+                                                    {val}{saaText}{budgetText}
+                                                </option>
+                                            );
+                                        })}
+                                    </optgroup>
+                                ))}
+                                <optgroup label="=== OTHER ===">
+                                    <option value="__custom__">✍️ [Other] Type Custom Sponsor / Grantor...</option>
+                                </optgroup>
+                            </select>
+                        )}
+
+                        {/* SAA and Category Badges */}
+                        {matched && (
+                            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px]">
+                                {matched.saa_number && (
+                                    <span className="px-1.5 py-0.5 bg-blue-50 text-blue-800 rounded font-mono font-bold border border-blue-200">
+                                        🏷️ SAA NO: {matched.saa_number}
+                                    </span>
+                                )}
+                                {matched.allocated_budget > 0 && (
+                                    <span className="px-1.5 py-0.5 bg-emerald-50 text-emerald-800 rounded font-mono font-bold border border-emerald-200">
+                                        Budget: {formatCurrency(matched.allocated_budget)}
+                                    </span>
+                                )}
+                                <span className="px-1.5 py-0.5 bg-slate-100 text-slate-700 rounded font-semibold">
+                                    {matched.category}
+                                </span>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="w-36 sm:w-44">
+                        <label className="block text-[10px] text-slate-500 uppercase font-black tracking-wider mb-1">
+                            Amount (₱)
+                        </label>
+                        <input
+                            type="number"
+                            step="0.01"
+                            value={g.amount || ''}
+                            onChange={e => handleGrantorChange(idx, 'amount', e.target.value)}
+                            placeholder="0.00"
+                            className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs font-mono font-bold text-teal-800"
+                        />
+                    </div>
+
+                    <div className="pt-6">
+                        <button
+                            type="button"
+                            onClick={() => handleRemoveGrantor(idx)}
+                            title="Remove Grantor"
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                        >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    const handleFinancialChange = (field, val) => {
+        const next = { ...form, [field]: val };
+        const bill = parseFloat(field === 'hospital_bill_balance' ? val : next.hospital_bill_balance) || 0;
+        const pn = parseFloat(field === 'pn_amount' ? val : next.pn_amount) || 0;
+        const totalFa = (next.fa_grantors && next.fa_grantors.length > 0)
+            ? next.fa_grantors.reduce((sum, g) => sum + (parseFloat(g.amount) || 0), 0)
+            : (parseFloat(next.fa_amount) || 0);
+        const cash = parseFloat(field === 'cash_paid' ? val : next.cash_paid) || 0;
+        const disc = parseFloat(field === 'discount' ? val : next.discount) || 0;
+
+        if (bill > 0) {
+            next.remaining_balance = Math.max(0, Number((bill - totalFa - pn - cash - disc).toFixed(2)));
+        } else if (pn > 0) {
+            next.remaining_balance = Math.max(0, Number((pn - totalFa - cash - disc).toFixed(2)));
+        } else {
+            next.remaining_balance = 0;
+        }
+        setForm(next);
+    };
+    const handleBillOrPnChange = handleFinancialChange;
+
+    const preparePayload = (formData) => ({
+        ...formData,
+        entry_date: formData.entry_date || null,
+        fa_date: formData.fa_date || null,
+        or_date: formData.or_date || null,
+        hospital_bill_balance: formData.hospital_bill_balance !== '' ? Number(formData.hospital_bill_balance) : 0,
+        pn_amount: formData.pn_amount !== '' ? Number(formData.pn_amount) : 0,
+        fa_amount: formData.fa_amount !== '' ? Number(formData.fa_amount) : 0,
+        cash_paid: formData.cash_paid !== '' ? Number(formData.cash_paid) : 0,
+        discount: formData.discount !== '' ? Number(formData.discount) : 0,
+        remaining_balance: formData.remaining_balance !== '' ? Number(formData.remaining_balance) : 0,
+    });
+
     const handleSaveNew = async (e) => {
         e.preventDefault();
         setSubmitting(true);
         try {
-            await axios.post('/credit-promissory/notes', form);
+            await axios.post('/credit-promissory/notes', preparePayload(form));
             showToast('Promissory record created successfully!');
             setIsAddModalOpen(false);
             fetchNotes();
@@ -162,7 +465,7 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
         if (!editingNote) return;
         setSubmitting(true);
         try {
-            await axios.put(`/credit-promissory/notes/${editingNote.id}`, form);
+            await axios.put(`/credit-promissory/notes/${editingNote.id}`, preparePayload(form));
             showToast('Promissory record updated successfully!');
             setIsEditModalOpen(false);
             setEditingNote(null);
@@ -247,16 +550,27 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
                 </div>
                 <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 shadow-sm col-span-2 md:col-span-1 flex flex-col justify-between">
                     <div>
-                        <span className="text-[10px] font-black uppercase tracking-wider text-emerald-600">Fast Action</span>
-                        <div className="text-xs font-bold text-emerald-800 mt-0.5">Add New Patient Entry</div>
+                        <span className="text-[10px] font-black uppercase tracking-wider text-emerald-600">Quick Actions</span>
+                        <div className="text-xs font-bold text-emerald-800 mt-0.5">Patient Entry & Reports</div>
                     </div>
-                    <button 
-                        onClick={handleOpenAdd}
-                        className="mt-2 w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 rounded-lg text-xs transition-colors shadow-sm flex items-center justify-center space-x-1"
-                    >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
-                        <span>New Promissory Note</span>
-                    </button>
+                    <div className="mt-2 flex flex-col gap-1.5">
+                        <button 
+                            onClick={handleOpenAdd}
+                            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-3 rounded-lg text-xs transition-colors shadow-sm flex items-center justify-center space-x-1"
+                        >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
+                            <span>New Promissory Note</span>
+                        </button>
+                        {onOpenReports && (
+                            <button 
+                                onClick={onOpenReports}
+                                className="w-full bg-teal-700 hover:bg-teal-800 text-white font-bold py-1.5 px-3 rounded-lg text-xs transition-colors shadow-sm flex items-center justify-center space-x-1"
+                            >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                                <span>Reports & SAA Budgets</span>
+                            </button>
+                        )}
+                    </div>
                 </div>
             </div>
 
@@ -448,7 +762,19 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
                                                 {note.fa_amount > 0 ? (
                                                     <div className="text-slate-700">
                                                         <span className="font-bold text-emerald-700">{formatCurrency(note.fa_amount)}</span>
-                                                        <span className="text-[10px] block text-slate-500 font-semibold">{note.fa_grantor || 'Assistance'}</span>
+                                                        {note.fa_grantors && Array.isArray(note.fa_grantors) && note.fa_grantors.length > 1 ? (
+                                                            <div className="mt-0.5 space-y-0.5">
+                                                                {note.fa_grantors.map((g, gi) => (
+                                                                    <div key={gi} className="text-[10px] text-slate-600 font-medium leading-tight">
+                                                                        • <span className="font-bold">{g.grantor}</span>: {formatCurrency(g.amount)}
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        ) : (
+                                                            <span className="text-[10px] block text-slate-500 font-semibold truncate max-w-[200px]" title={note.fa_grantor}>
+                                                                {note.fa_grantor || 'Assistance'}
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 ) : note.cash_paid > 0 ? (
                                                     <div className="text-slate-700">
@@ -621,7 +947,7 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
                                             type="number" 
                                             step="0.01" 
                                             value={form.hospital_bill_balance} 
-                                            onChange={e => setForm({...form, hospital_bill_balance: e.target.value})} 
+                                            onChange={e => handleBillOrPnChange('hospital_bill_balance', e.target.value)} 
                                             placeholder="0.00" 
                                             className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono"
                                         />
@@ -632,7 +958,7 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
                                             type="number" 
                                             step="0.01" 
                                             value={form.pn_amount} 
-                                            onChange={e => setForm({...form, pn_amount: e.target.value, remaining_balance: e.target.value})} 
+                                            onChange={e => handleBillOrPnChange('pn_amount', e.target.value)} 
                                             placeholder="0.00" 
                                             className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono"
                                         />
@@ -675,27 +1001,46 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
                                 </label>
                             </div>
 
-                            {/* Assistance & Payment Details */}
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                <div>
-                                    <label className="block text-slate-600 uppercase mb-1">F/A Grantor (e.g. MAIP, PCSO)</label>
-                                    <input 
-                                        type="text" 
-                                        value={form.fa_grantor} 
-                                        onChange={e => setForm({...form, fa_grantor: e.target.value})} 
-                                        placeholder="e.g. SEN. BONG GO / MAIP" 
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                                    />
+                            {/* Financial Assistance (F/A) & Grantors (Multiple Grantors supported) */}
+                            <div className="bg-teal-50/50 p-3.5 rounded-xl border border-teal-200/80 space-y-3">
+                                <div className="flex justify-between items-center">
+                                    <div>
+                                        <span className="text-[11px] font-black uppercase text-teal-800 tracking-wider">
+                                            Financial Assistance (F/A) Grantors
+                                        </span>
+                                        <p className="text-[10px] text-teal-600 font-medium">Add one or multiple grantors (e.g. SEN. BONG GO, CONG. GUINTO, MAIP)</p>
+                                    </div>
+                                    <div className="flex items-center space-x-2">
+                                        {form.fa_amount > 0 && (
+                                            <span className="px-2.5 py-1 bg-teal-100 text-teal-800 rounded-lg text-xs font-black border border-teal-300">
+                                                Total F/A: {formatCurrency(form.fa_amount)}
+                                            </span>
+                                        )}
+                                        <button
+                                            type="button"
+                                            onClick={handleAddGrantor}
+                                            className="px-2.5 py-1 text-xs font-bold text-teal-700 bg-white hover:bg-teal-100/70 border border-teal-300 rounded-lg transition-colors flex items-center space-x-1 shadow-sm"
+                                        >
+                                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4"></path></svg>
+                                            <span>Add Grantor</span>
+                                        </button>
+                                    </div>
                                 </div>
-                                <div>
-                                    <label className="block text-slate-600 uppercase mb-1">F/A Amount</label>
+
+                                {/* Dynamic Grantor Rows (Standard SAA Dropdown + Custom) */}
+                                <div className="space-y-2">
+                                    {(form.fa_grantors && form.fa_grantors.length > 0 ? form.fa_grantors : [{ grantor: '', amount: '', isCustom: false }]).map((g, idx) => 
+                                        renderGrantorRow(g, idx)
+                                    )}
+                                </div>
+
+                                <div className="w-full sm:w-1/2 pt-1">
+                                    <label className="block text-slate-600 uppercase mb-1 text-[10px] font-bold">F/A Grant Date</label>
                                     <input 
-                                        type="number" 
-                                        step="0.01" 
-                                        value={form.fa_amount} 
-                                        onChange={e => setForm({...form, fa_amount: e.target.value})} 
-                                        placeholder="0.00" 
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono"
+                                        type="date" 
+                                        value={form.fa_date} 
+                                        onChange={e => setForm({...form, fa_date: e.target.value})} 
+                                        className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white"
                                     />
                                 </div>
                             </div>
@@ -707,7 +1052,7 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
                                         type="number" 
                                         step="0.01" 
                                         value={form.cash_paid} 
-                                        onChange={e => setForm({...form, cash_paid: e.target.value})} 
+                                        onChange={e => handleFinancialChange('cash_paid', e.target.value)} 
                                         placeholder="0.00" 
                                         className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono"
                                     />
@@ -823,42 +1168,60 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
                             </div>
 
                             {/* Section Category */}
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                                <div>
-                                    <label className="block text-slate-600 uppercase mb-1">Sheet / Category</label>
-                                    <select 
-                                        value={form.sheet_category} 
-                                        onChange={e => setForm({...form, sheet_category: e.target.value})} 
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                                    >
-                                        <option value="daily trans  2026">2026 Daily Trans</option>
-                                        <option value="daily trans  BUCAS CENTER">BUCAS Center</option>
-                                        <option value="daily transac  CT SCAN">CT Scan</option>
-                                        <option value="daily transaction  DIALYSIS">Dialysis</option>
-                                        <option value="PN GAURANTOR RMPH EMPLOYEE">RMPH Guarantor</option>
-                                        <option value="daily trans  2025">2025 Daily Trans</option>
-                                        <option value="daily trans  2024">2024 Daily Trans</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-slate-600 uppercase mb-1">PN Amount</label>
-                                    <input 
-                                        type="number" 
-                                        step="0.01" 
-                                        value={form.pn_amount} 
-                                        onChange={e => setForm({...form, pn_amount: e.target.value})} 
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-rose-700 uppercase mb-1 font-bold">Remaining Balance</label>
-                                    <input 
-                                        type="number" 
-                                        step="0.01" 
-                                        value={form.remaining_balance} 
-                                        onChange={e => setForm({...form, remaining_balance: e.target.value})} 
-                                        className="w-full px-3 py-2 border border-rose-300 bg-rose-50/50 rounded-lg text-xs font-mono font-bold text-rose-900"
-                                    />
+                            <div>
+                                <label className="block text-slate-600 uppercase mb-1">Sheet / Category</label>
+                                <select 
+                                    value={form.sheet_category} 
+                                    onChange={e => setForm({...form, sheet_category: e.target.value})} 
+                                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                                >
+                                    <option value="daily trans  2026">2026 Daily Trans</option>
+                                    <option value="daily trans  BUCAS CENTER">BUCAS Center</option>
+                                    <option value="daily transac  CT SCAN">CT Scan</option>
+                                    <option value="daily transaction  DIALYSIS">Dialysis</option>
+                                    <option value="PN GAURANTOR RMPH EMPLOYEE">RMPH Guarantor</option>
+                                    <option value="daily trans  2025">2025 Daily Trans</option>
+                                    <option value="daily trans  2024">2024 Daily Trans</option>
+                                </select>
+                            </div>
+
+                            {/* Financial Amounts */}
+                            <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-3">
+                                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Financial Amounts</span>
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                    <div>
+                                        <label className="block text-slate-600 uppercase mb-1">Hospital Bill Total</label>
+                                        <input 
+                                            type="number" 
+                                            step="0.01" 
+                                            value={form.hospital_bill_balance} 
+                                            onChange={e => handleFinancialChange('hospital_bill_balance', e.target.value)} 
+                                            placeholder="0.00" 
+                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-slate-600 uppercase mb-1">PN Amount</label>
+                                        <input 
+                                            type="number" 
+                                            step="0.01" 
+                                            value={form.pn_amount} 
+                                            onChange={e => handleFinancialChange('pn_amount', e.target.value)} 
+                                            placeholder="0.00" 
+                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-rose-700 uppercase mb-1 font-bold">Remaining Balance</label>
+                                        <input 
+                                            type="number" 
+                                            step="0.01" 
+                                            value={form.remaining_balance} 
+                                            onChange={e => setForm({...form, remaining_balance: e.target.value})} 
+                                            placeholder="0.00" 
+                                            className="w-full px-3 py-2 border border-rose-300 bg-rose-50/50 rounded-lg text-xs font-mono font-bold text-rose-900"
+                                        />
+                                    </div>
                                 </div>
                             </div>
 
@@ -873,6 +1236,50 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
                                 />
                             </div>
 
+                            {/* Financial Assistance (F/A) & Grantors (Multiple Grantors supported) */}
+                            <div className="bg-teal-50/50 p-3.5 rounded-xl border border-teal-200/80 space-y-3">
+                                <div className="flex justify-between items-center">
+                                    <div>
+                                        <span className="text-[11px] font-black uppercase text-teal-800 tracking-wider">
+                                            Financial Assistance (F/A) Grantors
+                                        </span>
+                                        <p className="text-[10px] text-teal-600 font-medium">Add one or multiple grantors (e.g. SEN. BONG GO, CONG. GUINTO, MAIP)</p>
+                                    </div>
+                                    <div className="flex items-center space-x-2">
+                                        {form.fa_amount > 0 && (
+                                            <span className="px-2.5 py-1 bg-teal-100 text-teal-800 rounded-lg text-xs font-black border border-teal-300">
+                                                Total F/A: {formatCurrency(form.fa_amount)}
+                                            </span>
+                                        )}
+                                        <button
+                                            type="button"
+                                            onClick={handleAddGrantor}
+                                            className="px-2.5 py-1 text-xs font-bold text-teal-700 bg-white hover:bg-teal-100/70 border border-teal-300 rounded-lg transition-colors flex items-center space-x-1 shadow-sm"
+                                        >
+                                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4"></path></svg>
+                                            <span>Add Grantor</span>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Dynamic Grantor Rows (Standard SAA Dropdown + Custom) */}
+                                <div className="space-y-2">
+                                    {(form.fa_grantors && form.fa_grantors.length > 0 ? form.fa_grantors : [{ grantor: '', amount: '', isCustom: false }]).map((g, idx) => 
+                                        renderGrantorRow(g, idx)
+                                    )}
+                                </div>
+
+                                <div className="w-full sm:w-1/2 pt-1">
+                                    <label className="block text-slate-600 uppercase mb-1 text-[10px] font-bold">F/A Grant Date</label>
+                                    <input 
+                                        type="date" 
+                                        value={form.fa_date} 
+                                        onChange={e => setForm({...form, fa_date: e.target.value})} 
+                                        className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white"
+                                    />
+                                </div>
+                            </div>
+
                             {/* Payments / Assistance updates */}
                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 p-3 rounded-lg border border-slate-200">
                                 <div>
@@ -881,7 +1288,7 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
                                         type="number" 
                                         step="0.01" 
                                         value={form.cash_paid} 
-                                        onChange={e => setForm({...form, cash_paid: e.target.value})} 
+                                        onChange={e => handleFinancialChange('cash_paid', e.target.value)} 
                                         placeholder="0.00" 
                                         className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono"
                                     />

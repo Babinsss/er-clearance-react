@@ -37,6 +37,21 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
     const [editingDept, setEditingDept] = useState(null);
     const [deptForm, setDeptForm] = useState({ name: '', category: 'Ward' });
 
+    // Patient Edit State
+    const [editingPatient, setEditingPatient] = useState(null);
+    const [patientEditForm, setPatientEditForm] = useState({
+        hospital_number: '',
+        patient_name: '',
+        room_ward: '',
+        arrival_datetime: '',
+        disposition: '',
+        overall_status: 'Routing in Progress',
+        is_oecb: false,
+        has_oxygen: false,
+        oxygen_remarks: ''
+    });
+    const [isSavingPatient, setIsSavingPatient] = useState(false);
+
     const filteredStaff = staff.filter(user => {
         const term = searchTerm.toLowerCase();
         const matchesSearch = 
@@ -102,6 +117,55 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
                 onSuccess: () => showToast(`Routing record for ${name} has been permanently deleted.`)
             });
         }
+    };
+
+    const openEditPatientModal = (tx) => {
+        let formattedArrival = '';
+        if (tx.arrival_datetime) {
+            const d = new Date(tx.arrival_datetime);
+            if (!isNaN(d.getTime())) {
+                const pad = (n) => String(n).padStart(2, '0');
+                formattedArrival = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+            }
+        }
+
+        setEditingPatient(tx);
+        setPatientEditForm({
+            hospital_number: tx.hospital_number || '',
+            patient_name: tx.patient_name || '',
+            room_ward: tx.room_ward || (departments.find(d => d.category === 'Ward')?.name || 'Emergency Room'),
+            arrival_datetime: formattedArrival,
+            disposition: tx.disposition || 'Improved',
+            overall_status: tx.overall_status || 'Routing in Progress',
+            is_oecb: Boolean(tx.is_oecb),
+            has_oxygen: Boolean(tx.has_oxygen),
+            oxygen_remarks: tx.oxygen_remarks || ''
+        });
+    };
+
+    const handleUpdatePatient = (e) => {
+        e.preventDefault();
+        if (!editingPatient) return;
+        setIsSavingPatient(true);
+
+        router.put(`/admin/transactions/${editingPatient.id}`, {
+            ...patientEditForm,
+            is_oecb: Boolean(patientEditForm.is_oecb),
+            has_oxygen: Boolean(patientEditForm.has_oxygen),
+            oxygen_remarks: patientEditForm.has_oxygen ? patientEditForm.oxygen_remarks : null,
+        }, {
+            preserveScroll: true,
+            onSuccess: () => {
+                setIsSavingPatient(false);
+                setEditingPatient(null);
+                showToast(`Patient record for ${patientEditForm.patient_name} updated successfully.`);
+            },
+            onError: (errs) => {
+                setIsSavingPatient(false);
+                console.error(errs);
+                showToast('Failed to update patient record. Please check inputs.');
+            }
+        });
     };
 
     // --- STAFF HANDLERS ---
@@ -197,6 +261,9 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
             });
         }
     };
+
+    const availableWards = departments.filter(d => d.category === 'Ward').map(d => d.name);
+    const wardOptions = availableWards.length > 0 ? availableWards : ['Emergency Room', 'Surgical Ward', 'Ortho Ward', 'OB Ward', 'Outpatient'];
 
     return (
         <PortalLayout>
@@ -447,7 +514,15 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
                                                         </div>
                                                     </td>
                                                     <td className="p-4 pr-6 text-right">
-                                                        <div className="flex items-center justify-end gap-2">
+                                                        <div className="flex items-center justify-end gap-2 flex-wrap">
+                                                            <button
+                                                                onClick={() => openEditPatientModal(tx)}
+                                                                className="bg-amber-50 hover:bg-amber-100 text-amber-700 hover:text-amber-800 border border-amber-300 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center space-x-1"
+                                                                title="Edit patient routing details"
+                                                            >
+                                                                <svg className="w-3.5 h-3.5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                                                                <span>Edit</span>
+                                                            </button>
                                                             {tx.overall_status === 'Routing in Progress' && (
                                                                 <button
                                                                     onClick={() => handleCancelPatient(tx.id, tx.patient_name)}
@@ -601,9 +676,10 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
                                 <label className="block text-xs font-bold text-slate-600 uppercase mb-1">Assigned Role / Department</label>
                                 <select value={newUserForm.department} onChange={e => setNewUserForm({...newUserForm, department: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-teal-500 focus:border-teal-500">
                                     <option value="ICT / Admin">ICT / Admin (Administrator)</option>
+                                    <option value="Supervisor">Supervisor (Clinical / Nursing)</option>
                                     <option value="Billing & Claims">Billing & Claims</option>
                                     {departments
-                                        .filter(dept => !['billing & claims', 'ict / admin'].includes(dept.name.trim().toLowerCase()))
+                                        .filter(dept => !['billing & claims', 'ict / admin', 'supervisor'].includes(dept.name.trim().toLowerCase()))
                                         .map(dept => (
                                             <option key={dept.id} value={dept.name}>{dept.name} ({dept.category})</option>
                                         ))}
@@ -655,9 +731,10 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
                                 <label className="block text-xs font-bold text-slate-600 uppercase mb-1">Assigned Department / Ward</label>
                                 <select value={editForm.department} onChange={e => setEditForm({...editForm, department: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-teal-500 focus:border-teal-500">
                                     <option value="ICT / Admin">ICT / Admin</option>
+                                    <option value="Supervisor">Supervisor</option>
                                     <option value="Billing & Claims">Billing & Claims</option>
                                     {departments
-                                        .filter(dept => !['billing & claims', 'ict / admin'].includes(dept.name.trim().toLowerCase()))
+                                        .filter(dept => !['billing & claims', 'ict / admin', 'supervisor'].includes(dept.name.trim().toLowerCase()))
                                         .map(dept => (
                                             <option key={dept.id} value={dept.name}>{dept.name}</option>
                                         ))}
@@ -703,6 +780,238 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
                             <div className="pt-4 flex justify-end gap-2 border-t border-slate-100">
                                 <button type="button" onClick={() => setIsDeptModalOpen(false)} className="px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">Cancel</button>
                                 <button type="submit" className="px-4 py-2 text-sm font-bold text-white bg-teal-600 hover:bg-teal-700 rounded-lg shadow-sm transition-colors">Save Department</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* EDIT ROUTED PATIENT MODAL */}
+            {editingPatient && (
+                <div className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 overflow-y-auto">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in zoom-in duration-200 my-8">
+                        
+                        {/* Modal Header */}
+                        <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
+                            <div>
+                                <div className="flex items-center space-x-2">
+                                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-700 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
+                                        Patient Routing Edit
+                                    </span>
+                                    <span className="font-mono text-xs text-slate-400">
+                                        Enc: {editingPatient.enccode}
+                                    </span>
+                                </div>
+                                <h3 className="text-lg font-black text-slate-800 mt-0.5">
+                                    Edit Routed Patient Details
+                                </h3>
+                            </div>
+                            <button
+                                onClick={() => setEditingPatient(null)}
+                                className="text-slate-400 hover:text-rose-500 transition-colors p-1"
+                            >
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                            </button>
+                        </div>
+
+                        {/* Modal Form */}
+                        <form onSubmit={handleUpdatePatient} className="p-6 space-y-4">
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-600 uppercase mb-1">
+                                        Patient Full Name <span className="text-rose-500">*</span>
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={patientEditForm.patient_name}
+                                        onChange={e => setPatientEditForm({ ...patientEditForm, patient_name: e.target.value })}
+                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-semibold text-slate-800 focus:ring-teal-500 focus:border-teal-500 uppercase"
+                                        required
+                                    />
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-600 uppercase mb-1">
+                                        Hospital Number <span className="text-rose-500">*</span>
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={patientEditForm.hospital_number}
+                                        onChange={e => setPatientEditForm({ ...patientEditForm, hospital_number: e.target.value })}
+                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono text-slate-800 focus:ring-teal-500 focus:border-teal-500 uppercase"
+                                        required
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-600 uppercase mb-1">
+                                        Originating Room / Ward <span className="text-rose-500">*</span>
+                                    </label>
+                                    <select
+                                        value={patientEditForm.room_ward}
+                                        onChange={e => setPatientEditForm({ ...patientEditForm, room_ward: e.target.value })}
+                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-bold text-slate-700 focus:ring-teal-500 focus:border-teal-500"
+                                        required
+                                    >
+                                        {wardOptions.map((w, idx) => (
+                                            <option key={idx} value={w}>{w}</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-600 uppercase mb-1">
+                                        Arrival Date & Time
+                                    </label>
+                                    <input
+                                        type="datetime-local"
+                                        value={patientEditForm.arrival_datetime}
+                                        onChange={e => setPatientEditForm({ ...patientEditForm, arrival_datetime: e.target.value })}
+                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-teal-500 focus:border-teal-500"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-600 uppercase mb-1">
+                                        Patient Disposition
+                                    </label>
+                                    <select
+                                        value={patientEditForm.disposition}
+                                        onChange={e => setPatientEditForm({ ...patientEditForm, disposition: e.target.value })}
+                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-teal-500 focus:border-teal-500"
+                                    >
+                                        <option value="">Select status...</option>
+                                        <option value="Improved">Improved</option>
+                                        <option value="HAMA">HAMA</option>
+                                        <option value="Transferred">Transferred</option>
+                                        <option value="Absconded">Absconded</option>
+                                        <option value="Died">Died</option>
+                                    </select>
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-600 uppercase mb-1">
+                                        Overall Clearance Status
+                                    </label>
+                                    <select
+                                        value={patientEditForm.overall_status}
+                                        onChange={e => setPatientEditForm({ ...patientEditForm, overall_status: e.target.value })}
+                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-bold focus:ring-teal-500 focus:border-teal-500"
+                                        required
+                                    >
+                                        <option value="Routing in Progress">Routing in Progress</option>
+                                        <option value="Cleared">Cleared (Override)</option>
+                                        <option value="Cancelled">Cancelled</option>
+                                        <option value="Archived">Archived</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            {/* OECB and Oxygen Flags */}
+                            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-600 uppercase mb-2">
+                                        Is this an OECB Patient?
+                                    </label>
+                                    <div className="flex gap-6">
+                                        <label className="flex items-center space-x-2 cursor-pointer">
+                                            <input
+                                                type="radio"
+                                                name="admin_is_oecb"
+                                                checked={patientEditForm.is_oecb === true}
+                                                onChange={() => setPatientEditForm({ ...patientEditForm, is_oecb: true })}
+                                                className="w-4 h-4 text-teal-600 focus:ring-teal-500 border-slate-300"
+                                            />
+                                            <span className="text-sm font-bold text-slate-700">Yes (OECB)</span>
+                                        </label>
+                                        <label className="flex items-center space-x-2 cursor-pointer">
+                                            <input
+                                                type="radio"
+                                                name="admin_is_oecb"
+                                                checked={patientEditForm.is_oecb === false}
+                                                onChange={() => setPatientEditForm({ ...patientEditForm, is_oecb: false })}
+                                                className="w-4 h-4 text-teal-600 focus:ring-teal-500 border-slate-300"
+                                            />
+                                            <span className="text-sm font-bold text-slate-700">No</span>
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div className="pt-3 border-t border-slate-200">
+                                    <label className="block text-xs font-bold text-slate-600 uppercase mb-2">
+                                        Has Oxygen Charges?
+                                    </label>
+                                    <div className="flex gap-6">
+                                        <label className="flex items-center space-x-2 cursor-pointer">
+                                            <input
+                                                type="radio"
+                                                name="admin_has_oxygen"
+                                                checked={patientEditForm.has_oxygen === true}
+                                                onChange={() => setPatientEditForm({ ...patientEditForm, has_oxygen: true })}
+                                                className="w-4 h-4 text-teal-600 focus:ring-teal-500 border-slate-300"
+                                            />
+                                            <span className="text-sm font-bold text-slate-700">Yes</span>
+                                        </label>
+                                        <label className="flex items-center space-x-2 cursor-pointer">
+                                            <input
+                                                type="radio"
+                                                name="admin_has_oxygen"
+                                                checked={patientEditForm.has_oxygen === false}
+                                                onChange={() => setPatientEditForm({ ...patientEditForm, has_oxygen: false, oxygen_remarks: '' })}
+                                                className="w-4 h-4 text-teal-600 focus:ring-teal-500 border-slate-300"
+                                            />
+                                            <span className="text-sm font-bold text-slate-700">No</span>
+                                        </label>
+                                    </div>
+
+                                    {patientEditForm.has_oxygen && (
+                                        <div className="mt-3">
+                                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">
+                                                Oxygen Remarks (Notes for Cardio Pulmo)
+                                            </label>
+                                            <textarea
+                                                rows="2"
+                                                value={patientEditForm.oxygen_remarks}
+                                                onChange={e => setPatientEditForm({ ...patientEditForm, oxygen_remarks: e.target.value })}
+                                                placeholder="e.g. Used 1 tank for 4 hours..."
+                                                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-teal-500"
+                                            ></textarea>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Modal Footer */}
+                            <div className="pt-4 flex justify-end gap-3 border-t border-slate-100">
+                                <button
+                                    type="button"
+                                    onClick={() => setEditingPatient(null)}
+                                    className="px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={isSavingPatient}
+                                    className="px-5 py-2 text-sm font-bold text-white bg-teal-600 hover:bg-teal-700 disabled:bg-slate-400 rounded-lg shadow-sm transition-colors flex items-center space-x-2"
+                                >
+                                    {isSavingPatient ? (
+                                        <>
+                                            <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                            <span>Saving Changes...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path></svg>
+                                            <span>Save Changes</span>
+                                        </>
+                                    )}
+                                </button>
                             </div>
                         </form>
                     </div>
