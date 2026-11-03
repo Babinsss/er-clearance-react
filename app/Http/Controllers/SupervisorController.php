@@ -32,9 +32,21 @@ class SupervisorController extends Controller
     {
         $this->authorizeSupervisor($request);
 
-        $transactions = ClearanceTransaction::orderBy('updated_at', 'desc')
-            ->take(300)
-            ->get();
+        $txQuery = ClearanceTransaction::orderBy('updated_at', 'desc');
+
+        if ($request->filled('search')) {
+            $search = trim($request->search);
+            $txQuery->where(function ($q) use ($search) {
+                $q->where('patient_name', 'like', "%{$search}%")
+                  ->orWhere('hospital_number', 'like', "%{$search}%")
+                  ->orWhere('enccode', 'like', "%{$search}%")
+                  ->orWhere('room_ward', 'like', "%{$search}%")
+                  ->orWhere('encoded_by', 'like', "%{$search}%");
+            });
+            $transactions = $txQuery->take(150)->get();
+        } else {
+            $transactions = $txQuery->take(300)->get();
+        }
 
         $enccodes = $transactions->pluck('enccode')->toArray();
         $allLogs = ClearanceLog::whereIn('enccode', $enccodes)

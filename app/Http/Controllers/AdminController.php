@@ -32,9 +32,20 @@ class AdminController extends Controller
         });
         $departments = Department::orderBy('category')->orderBy('name')->get();
 
-        $transactions = \App\Models\ClearanceTransaction::orderBy('created_at', 'desc')
-            ->take(200)
-            ->get();
+        $txQuery = \App\Models\ClearanceTransaction::orderBy('created_at', 'desc');
+
+        if ($request->filled('search')) {
+            $search = trim($request->search);
+            $txQuery->where(function ($q) use ($search) {
+                $q->where('patient_name', 'like', "%{$search}%")
+                  ->orWhere('hospital_number', 'like', "%{$search}%")
+                  ->orWhere('enccode', 'like', "%{$search}%")
+                  ->orWhere('room_ward', 'like', "%{$search}%");
+            });
+            $transactions = $txQuery->take(150)->get();
+        } else {
+            $transactions = $txQuery->take(200)->get();
+        }
 
         $enccodes = $transactions->pluck('enccode')->toArray();
         $allLogs = ClearanceLog::whereIn('enccode', $enccodes)->get()->groupBy('enccode');

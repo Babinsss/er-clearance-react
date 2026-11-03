@@ -41,24 +41,58 @@ Route::middleware(['auth', 'verified'])->group(function () {
         }
         
         // --- 1. BILLING & CLAIMS LOGIC ---
-        if ($user->department === 'Billing & Claims') {
+        if ($user->department === 'Billing & Claims' || $user->department === 'Billing' || $user->department === 'Claims' || $user->department === 'Billing and Claims') {
             $pendingTx = \App\Models\ClearanceTransaction::where('overall_status', 'Routing in Progress')->get();
             foreach ($pendingTx as $ptx) {
                 \App\Http\Controllers\ClearanceController::recalculateStatus($ptx->enccode);
             }
 
-            $clearedPatients = \App\Models\ClearanceTransaction::where('overall_status', 'Cleared')
-                ->orderBy('updated_at', 'desc')
-                ->get();
+            $archiveSearch = trim(request('archive_search', ''));
+            $archivePage = max(1, (int) request('archive_page', 1));
+            $perPage = (int) request('archive_per_page', 50);
+            if (!in_array($perPage, [25, 50, 100, 200])) {
+                $perPage = 50;
+            }
 
-            $archivedPatients = \App\Models\ClearanceTransaction::where('overall_status', 'Archived')
-                ->orderBy('updated_at', 'desc')
-                ->take(50) 
-                ->get();
+            $getArchivePaginator = function() use ($archiveSearch, $archivePage, $perPage) {
+                static $paginator = null;
+                if ($paginator === null) {
+                    $query = \App\Models\ClearanceTransaction::where('overall_status', 'Archived')
+                        ->orderBy('updated_at', 'desc');
+
+                    if ($archiveSearch !== '') {
+                        $query->where(function($q) use ($archiveSearch) {
+                            $q->where('patient_name', 'like', "%{$archiveSearch}%")
+                              ->orWhere('hospital_number', 'like', "%{$archiveSearch}%")
+                              ->orWhere('enccode', 'like', "%{$archiveSearch}%");
+                        });
+                    }
+
+                    $paginator = $query->paginate($perPage, ['*'], 'archive_page', $archivePage);
+                }
+                return $paginator;
+            };
 
             return Inertia::render('Dashboard/Billing', [
-                'clearedPatients' => $clearedPatients,
-                'archivedPatients' => $archivedPatients
+                'clearedPatients' => fn() => \App\Models\ClearanceTransaction::where('overall_status', 'Cleared')
+                    ->orderBy('updated_at', 'desc')
+                    ->get(),
+
+                'archivedPatients' => fn() => $getArchivePaginator()->items(),
+
+                'archivePagination' => fn() => [
+                    'current_page' => $getArchivePaginator()->currentPage(),
+                    'last_page' => $getArchivePaginator()->lastPage(),
+                    'per_page' => $getArchivePaginator()->perPage(),
+                    'total' => $getArchivePaginator()->total(),
+                    'from' => $getArchivePaginator()->firstItem() ?? 0,
+                    'to' => $getArchivePaginator()->lastItem() ?? 0,
+                ],
+
+                'totalArchivedCount' => fn() => \App\Models\ClearanceTransaction::where('overall_status', 'Archived')->count(),
+                'archiveSearch' => $archiveSearch,
+                'archivePage' => $archivePage,
+                'archivePerPage' => $perPage,
             ]);
         }
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Head, router, usePage } from '@inertiajs/react';
 import PortalLayout from '@/Layouts/PortalLayout';
 
@@ -9,6 +9,7 @@ export default function SupervisorDashboard({ transactions = [], wards = [] }) {
     const [selectedWard, setSelectedWard] = useState('all');
     const [searchTerm, setSearchTerm] = useState('');
     const [toastMessage, setToastMessage] = useState(null);
+    const isFirstMount = useRef(true);
 
     // Edit Patient Modal State
     const [editingPatient, setEditingPatient] = useState(null);
@@ -52,6 +53,23 @@ export default function SupervisorDashboard({ transactions = [], wards = [] }) {
             if (window.Echo) window.Echo.leaveChannel('clearance-updates');
         };
     }, []);
+
+    // Database Search Debounce across all statuses (including deep archives)
+    useEffect(() => {
+        if (isFirstMount.current) {
+            isFirstMount.current = false;
+            return;
+        }
+
+        const timer = setTimeout(() => {
+            router.get('/supervisor', 
+                searchTerm.trim() ? { search: searchTerm.trim() } : {},
+                { preserveState: true, preserveScroll: true, only: ['transactions'] }
+            );
+        }, 350);
+
+        return () => clearTimeout(timer);
+    }, [searchTerm]);
 
     const showToast = (msg) => {
         setToastMessage(msg);

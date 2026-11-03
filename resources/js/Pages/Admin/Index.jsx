@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Head, router } from '@inertiajs/react';
 import PortalLayout from '@/Layouts/PortalLayout';
 import TurnaroundChart from '@/Components/TurnaroundChart'; // <-- IMPORTED CHART
@@ -10,6 +10,7 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
     const [toastMessage, setToastMessage] = useState(null);
     const [patientFilter, setPatientFilter] = useState('all');
     const [staffFilter, setStaffFilter] = useState('all'); // 'all', 'online', 'offline'
+    const isFirstMount = useRef(true);
     
     // Auto-refresh every 15s to keep active users and clearance queues updated
     useEffect(() => {
@@ -22,6 +23,25 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
         }, 15000);
         return () => clearInterval(pollInterval);
     }, []);
+
+    // Database Search Debounce when on patients tab (finds archived records from whole database)
+    useEffect(() => {
+        if (isFirstMount.current) {
+            isFirstMount.current = false;
+            return;
+        }
+
+        if (activeTab !== 'patients') return;
+
+        const timer = setTimeout(() => {
+            router.get('/admin', 
+                searchTerm.trim() ? { search: searchTerm.trim() } : {},
+                { preserveState: true, preserveScroll: true, only: ['transactions'] }
+            );
+        }, 350);
+
+        return () => clearTimeout(timer);
+    }, [searchTerm, activeTab]);
 
     const activeUsersCount = staff.filter(u => u.is_online).length;
 
