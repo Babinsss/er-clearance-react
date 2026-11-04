@@ -5,6 +5,7 @@ use App\Http\Controllers\ClearanceController;
 use App\Http\Controllers\AdminController;
 use App\Http\Controllers\SupervisorController;
 use App\Http\Controllers\CreditPromissoryController;
+use App\Http\Controllers\BillingController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\DB;
@@ -42,58 +43,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         
         // --- 1. BILLING & CLAIMS LOGIC ---
         if ($user->department === 'Billing & Claims' || $user->department === 'Billing' || $user->department === 'Claims' || $user->department === 'Billing and Claims') {
-            $pendingTx = \App\Models\ClearanceTransaction::where('overall_status', 'Routing in Progress')->get();
-            foreach ($pendingTx as $ptx) {
-                \App\Http\Controllers\ClearanceController::recalculateStatus($ptx->enccode);
-            }
-
-            $archiveSearch = trim(request('archive_search', ''));
-            $archivePage = max(1, (int) request('archive_page', 1));
-            $perPage = (int) request('archive_per_page', 50);
-            if (!in_array($perPage, [25, 50, 100, 200])) {
-                $perPage = 50;
-            }
-
-            $getArchivePaginator = function() use ($archiveSearch, $archivePage, $perPage) {
-                static $paginator = null;
-                if ($paginator === null) {
-                    $query = \App\Models\ClearanceTransaction::where('overall_status', 'Archived')
-                        ->orderBy('updated_at', 'desc');
-
-                    if ($archiveSearch !== '') {
-                        $query->where(function($q) use ($archiveSearch) {
-                            $q->where('patient_name', 'like', "%{$archiveSearch}%")
-                              ->orWhere('hospital_number', 'like', "%{$archiveSearch}%")
-                              ->orWhere('enccode', 'like', "%{$archiveSearch}%");
-                        });
-                    }
-
-                    $paginator = $query->paginate($perPage, ['*'], 'archive_page', $archivePage);
-                }
-                return $paginator;
-            };
-
-            return Inertia::render('Dashboard/Billing', [
-                'clearedPatients' => fn() => \App\Models\ClearanceTransaction::where('overall_status', 'Cleared')
-                    ->orderBy('updated_at', 'desc')
-                    ->get(),
-
-                'archivedPatients' => fn() => $getArchivePaginator()->items(),
-
-                'archivePagination' => fn() => [
-                    'current_page' => $getArchivePaginator()->currentPage(),
-                    'last_page' => $getArchivePaginator()->lastPage(),
-                    'per_page' => $getArchivePaginator()->perPage(),
-                    'total' => $getArchivePaginator()->total(),
-                    'from' => $getArchivePaginator()->firstItem() ?? 0,
-                    'to' => $getArchivePaginator()->lastItem() ?? 0,
-                ],
-
-                'totalArchivedCount' => fn() => \App\Models\ClearanceTransaction::where('overall_status', 'Archived')->count(),
-                'archiveSearch' => $archiveSearch,
-                'archivePage' => $archivePage,
-                'archivePerPage' => $perPage,
-            ]);
+            return app(BillingController::class)->index(request());
         }
 
         // --- 2. LIVE COST CENTER QUEUE LOGIC ---
@@ -298,6 +248,10 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::put('/supervisor/transactions/{id}', [SupervisorController::class, 'updateTransaction'])->name('supervisor.transactions.update');
     Route::post('/supervisor/transactions/{id}/cancel', [SupervisorController::class, 'cancelTransaction'])->name('supervisor.transactions.cancel');
     Route::post('/supervisor/transactions/{id}/reactivate', [SupervisorController::class, 'reactivateTransaction'])->name('supervisor.transactions.reactivate');
+
+    // --- BILLING ROUTES ---
+    Route::get('/billing', [BillingController::class, 'index'])->name('billing.index');
+    Route::get('/billing/analytics', [BillingController::class, 'getCostCenterAnalytics'])->name('billing.analytics');
 
     // --- CLEARANCE ROUTES ---
     Route::post('/transactions', [ClearanceController::class, 'storeTransaction'])->name('transactions.store');

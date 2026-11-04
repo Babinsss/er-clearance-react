@@ -18,4 +18,9 @@ class ClearanceLog extends Model
     {
         return $this->belongsTo(ClearanceTransaction::class, 'enccode', 'enccode');
     }
+
+    public function user()
+    {
+        return $this->belongsTo(User::class, 'user_id');
+    }
 }
