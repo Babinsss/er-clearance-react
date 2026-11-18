@@ -1,18 +1,22 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Head, router, usePage } from '@inertiajs/react';
 import PortalLayout from '@/Layouts/PortalLayout';
+import Modal from '@/Components/Modal';
 
 export default function Ward({ searchQuery, patient, clearances, activeQueue = [], clearedQueue = [] }) {
     const { auth } = usePage().props;
     const wardName = auth.user.department;
 
     const [activeTab, setActiveTab] = useState('active');
+    const [queueSearch, setQueueSearch] = useState('');
     const [isRouting, setIsRouting] = useState(false);
     const [isSearching, setIsSearching] = useState(false);
     const [toastMessage, setToastMessage] = useState(null);
     const [showOxygenModal, setShowOxygenModal] = useState(false);
+    const [highlightedEnccode, setHighlightedEnccode] = useState(null);
 
     const previousClearedCount = useRef(clearedQueue.length);
+    const cardRefs = useRef({});
     
     // THE BUG FIX: Tracks the current patient so background polling doesn't wipe your typing!
     const prevPatientCode = useRef(null);
@@ -114,9 +118,26 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                 setIsSearching(false);
             }
         } else {
+            if (prevPatientCode.current !== null) {
+                setForm(prev => ({
+                    ...prev,
+                    patient_name: '',
+                    arrival_datetime: '',
+                    disposition: '',
+                    is_oecb: '',
+                    has_oxygen: '',
+                    oxygen_remarks: ''
+                }));
+            }
             prevPatientCode.current = null;
         }
     }, [patient]);
+
+    useEffect(() => {
+        if (!highlightedEnccode) return;
+        const timer = setTimeout(() => setHighlightedEnccode(null), 3500);
+        return () => clearTimeout(timer);
+    }, [highlightedEnccode]);
 
     const handleOxygenToggle = (e) => {
         const val = e.target.value;
@@ -162,6 +183,37 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
     };
 
     const displayQueue = activeTab === 'active' ? activeQueue : clearedQueue;
+    const trimmedQueueSearch = queueSearch.trim().toLowerCase();
+    const filteredDisplayQueue = trimmedQueueSearch
+        ? displayQueue.filter((tx) =>
+            (tx.patient_name || '').toLowerCase().includes(trimmedQueueSearch) ||
+            (tx.hospital_number || '').toLowerCase().includes(trimmedQueueSearch) ||
+            (tx.enccode || '').toLowerCase().includes(trimmedQueueSearch) ||
+            (tx.disposition || '').toLowerCase().includes(trimmedQueueSearch)
+        )
+        : displayQueue;
+    const hasSearchedNoMatch = Boolean(
+        !isSearching &&
+        searchQuery &&
+        patient === null &&
+        form.hospital_number.trim() === searchQuery.trim()
+    );
+    const routedInActive = patient?.is_routed ? activeQueue.find(tx => tx.enccode === patient.enccode) : null;
+    const routedInCleared = patient?.is_routed ? clearedQueue.find(tx => tx.enccode === patient.enccode) : null;
+    const routedInWardQueue = Boolean(routedInActive || routedInCleared);
+
+    const handleViewInQueue = () => {
+        if (!patient?.enccode) return;
+        setQueueSearch('');
+        setActiveTab(routedInCleared ? 'completed' : 'active');
+        setHighlightedEnccode(patient.enccode);
+        setTimeout(() => {
+            const el = cardRefs.current[patient.enccode];
+            if (el) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }, 80);
+    };
 
     return (
         <PortalLayout>
@@ -173,7 +225,7 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                 <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 flex flex-col shrink-0 w-full md:w-80 h-fit">
                     <div className="mb-6 px-2 pt-2 border-b border-slate-100 pb-4 flex justify-between items-start">
                         <div>
-                            <h2 className="text-[10px] font-black text-teal-600 uppercase tracking-widest mb-1">Clinical Station</h2>
+                            <h2 className="text-[11px] font-black text-teal-600 uppercase tracking-widest mb-1">Clinical Station</h2>
                             <div className="text-xl font-bold text-slate-800">{wardName}</div>
                         </div>
                     </div>
@@ -182,7 +234,7 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                         <div>
                             <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1 flex justify-between">
                                 <span>Hospital Number</span>
-                                {isSearching && <span className="text-teal-500 animate-pulse">Searching...</span>}
+                                {isSearching && <span className="text-teal-500 animate-pulse motion-reduce:animate-none">Searching...</span>}
                             </label>
                             <input 
                                 type="text" 
@@ -197,7 +249,7 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                         <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
                             <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Patient Name</label>
                             {isSearching ? (
-                                <div className="w-full h-8 bg-slate-200 animate-pulse rounded border border-slate-300"></div>
+                                <div className="w-full h-8 bg-slate-200 animate-pulse motion-reduce:animate-none rounded border border-slate-300"></div>
                             ) : (
                                 <div>
                                     <input 
@@ -208,7 +260,13 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                                         placeholder="LASTNAME, FIRSTNAME" 
                                     />
                                     {patient?.enccode && (
-                                        <p className="text-[10px] font-mono text-slate-400 mt-1 uppercase">ENC: {patient.enccode}</p>
+                                        <p className="text-[11px] font-mono text-slate-400 mt-1 uppercase">ENC: {patient.enccode}</p>
+                                    )}
+                                    {hasSearchedNoMatch && (
+                                        <div role="status" className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-2 text-xs text-amber-900">
+                                            <p className="font-bold">No iHOMIS encounter found</p>
+                                            <p className="text-[11px] text-amber-800 mt-0.5">Verify the hospital number or encounter code and try again.</p>
+                                        </div>
                                     )}
                                 </div>
                             )}
@@ -318,28 +376,53 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                         )}
 
                         <div className="pt-2 mt-6 border-t border-slate-100">
-                            <button 
-                                type="submit" 
-                                disabled={!patient || isRouting || patient.is_routed}
-                                className="w-full bg-teal-600 hover:bg-teal-700 disabled:bg-slate-400 text-white font-bold py-3 px-4 rounded-lg shadow-sm transition-colors flex items-center justify-center space-x-2 disabled:cursor-not-allowed"
-                            >
-                                {isRouting ? (
-                                    <>
-                                        <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                                        <span>Routing...</span>
-                                    </>
-                                ) : patient?.is_routed ? (
-                                    <>
-                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path></svg>
+                            {patient?.is_routed ? (
+                                <div className="space-y-2.5">
+                                    <div className="w-full bg-emerald-50 border border-emerald-200 text-emerald-800 font-bold py-2.5 px-3 rounded-lg flex items-center justify-center space-x-2 text-sm">
+                                        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7"></path></svg>
                                         <span>Already Routed</span>
-                                    </>
-                                ) : (
-                                    <>
-                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
-                                        <span>Route Clearance</span>
-                                    </>
-                                )}
-                            </button>
+                                    </div>
+                                    <div className="grid grid-cols-1 gap-2">
+                                        {routedInWardQueue && (
+                                            <button
+                                                type="button"
+                                                onClick={handleViewInQueue}
+                                                className="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-2.5 px-3 rounded-lg shadow-sm transition-colors flex items-center justify-center space-x-2 text-xs"
+                                            >
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+                                                <span>View in Queue</span>
+                                            </button>
+                                        )}
+                                        <a
+                                            href={`/print-clearance/document?enccode=${encodeURIComponent(patient.enccode)}`}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="w-full bg-teal-600 hover:bg-teal-700 text-white font-bold py-2.5 px-3 rounded-lg shadow-sm transition-colors flex items-center justify-center space-x-2 text-xs"
+                                        >
+                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+                                            <span>Print F07</span>
+                                        </a>
+                                    </div>
+                                </div>
+                            ) : (
+                                <button 
+                                    type="submit" 
+                                    disabled={!patient || isRouting}
+                                    className="w-full bg-teal-600 hover:bg-teal-700 disabled:bg-slate-400 text-white font-bold py-3 px-4 rounded-lg shadow-sm transition-colors flex items-center justify-center space-x-2 disabled:cursor-not-allowed"
+                                >
+                                    {isRouting ? (
+                                        <>
+                                            <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                            <span>Routing...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+                                            <span>Route Clearance</span>
+                                        </>
+                                    )}
+                                </button>
+                            )}
                         </div>
                     </form>
                 </div>
@@ -347,51 +430,93 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                 {/* MAIN CONTENT: DYNAMIC TRACKING */}
                 <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col overflow-hidden">
                     
-                    <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex flex-col md:flex-row justify-between items-center gap-4 shrink-0">
+                    <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex flex-col lg:flex-row justify-between items-stretch lg:items-center gap-4 shrink-0">
                         <div className="flex items-center space-x-3">
                             <h3 className="text-lg font-bold text-slate-800">Clearance Tracker</h3>
-                            <span className="flex h-2 w-2 relative" title="Live Sync Active">
-                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal-400 opacity-75"></span>
-                                <span className="relative inline-flex rounded-full h-2 w-2 bg-teal-500"></span>
-                            </span>
+                            <span className="inline-flex rounded-full h-2 w-2 bg-teal-500" title="Live Sync Active" aria-hidden="true"></span>
                         </div>
                         
-                        <div className="flex p-1 bg-slate-200/60 rounded-lg shadow-inner">
-                            <button 
-                                onClick={() => setActiveTab('active')} 
-                                className={`px-4 py-1.5 text-sm font-bold rounded-md transition-all ${activeTab === 'active' ? 'bg-white text-teal-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                            >
-                                Active 
-                                {activeQueue.length > 0 && <span className="ml-1 bg-rose-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">{activeQueue.length}</span>}
-                            </button>
-                            <button 
-                                onClick={() => setActiveTab('completed')} 
-                                className={`px-4 py-1.5 text-sm font-bold rounded-md transition-all ${activeTab === 'completed' ? 'bg-white text-teal-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                            >
-                                Completed History
-                            </button>
+                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                            <div className="relative w-full sm:w-64">
+                                <svg className="w-4 h-4 absolute left-3 top-2.5 text-slate-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                                <input
+                                    type="text"
+                                    value={queueSearch}
+                                    onChange={(e) => setQueueSearch(e.target.value)}
+                                    aria-label="Search clearance tracker queue"
+                                    placeholder="Search queue (name or #)..."
+                                    className="w-full pl-9 pr-8 py-1.5 rounded-lg border-slate-300 shadow-sm focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm transition-all"
+                                />
+                                {queueSearch && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setQueueSearch('')}
+                                        aria-label="Clear queue search"
+                                        className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 text-xs font-bold"
+                                    >
+                                        ✕
+                                    </button>
+                                )}
+                            </div>
+
+                            <div className="flex p-1 bg-slate-200/60 rounded-lg shadow-inner shrink-0">
+                                <button 
+                                    type="button"
+                                    onClick={() => setActiveTab('active')} 
+                                    className={`px-4 py-1.5 text-sm font-bold rounded-md transition-all ${activeTab === 'active' ? 'bg-white text-teal-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                                >
+                                    Active 
+                                    {activeQueue.length > 0 && <span className="ml-1 bg-rose-500 text-white text-[11px] px-1.5 py-0.5 rounded-full">{activeQueue.length}</span>}
+                                </button>
+                                <button 
+                                    type="button"
+                                    onClick={() => setActiveTab('completed')} 
+                                    className={`px-4 py-1.5 text-sm font-bold rounded-md transition-all ${activeTab === 'completed' ? 'bg-white text-teal-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                                >
+                                    Completed History
+                                </button>
+                            </div>
                         </div>
                     </div>
 
                     <div className="overflow-y-auto flex-1 p-6 space-y-4 bg-slate-50/50">
-                        {displayQueue.length === 0 ? (
+                        {filteredDisplayQueue.length === 0 ? (
                             <div className="text-center py-12">
                                 <svg className="w-12 h-12 text-slate-200 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path></svg>
-                                <p className="text-sm font-medium text-slate-400">No {activeTab} clearances for {wardName}.</p>
+                                {trimmedQueueSearch ? (
+                                    <div className="space-y-2">
+                                        <p className="text-sm font-medium text-slate-600">
+                                            No {activeTab} clearances matching &ldquo;{queueSearch}&rdquo;.
+                                        </p>
+                                        <button
+                                            type="button"
+                                            onClick={() => setQueueSearch('')}
+                                            className="text-xs font-bold text-teal-700 hover:text-teal-900 underline"
+                                        >
+                                            Clear queue search
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <p className="text-sm font-medium text-slate-500">No {activeTab} clearances for {wardName}.</p>
+                                )}
                             </div>
                         ) : (
-                            displayQueue.map((tx, idx) => {
+                            filteredDisplayQueue.map((tx, idx) => {
                                 const requiredDepts = getRequiredDepartments(tx.room_ward);
                                 const gridColsClass = requiredDepts.length >= 7 ? 'md:grid-cols-4 lg:grid-cols-7' : requiredDepts.length === 6 ? 'md:grid-cols-3 lg:grid-cols-6' : 'md:grid-cols-5';
 
                                 return (
-                                    <div key={idx} className={`bg-white border border-slate-200 rounded-xl p-4 shadow-sm select-none transition-all duration-300 ${activeTab === 'completed' ? 'opacity-90 border-emerald-200' : 'border-slate-200 hover:shadow-md'}`}>
+                                    <div
+                                        key={tx.enccode || idx}
+                                        ref={(el) => { if (tx.enccode) cardRefs.current[tx.enccode] = el; }}
+                                        className={`bg-white border border-slate-200 rounded-xl p-4 shadow-sm select-none transition-all duration-300 ${highlightedEnccode === tx.enccode ? 'ring-2 ring-teal-500 border-teal-500 bg-teal-50/30' : ''} ${activeTab === 'completed' ? 'opacity-90 border-emerald-200' : 'border-slate-200 hover:shadow-md'}`}
+                                    >
                                         <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-3">
                                             <div>
                                                 <h4 className="font-bold text-slate-800 text-lg flex items-center gap-2">
                                                     {tx.patient_name}
                                                     {tx.is_oecb && (
-                                                        <span className="bg-amber-100 text-amber-800 text-[9px] font-bold px-2 py-0.5 rounded border border-amber-300">OECB</span>
+                                                        <span className="bg-amber-100 text-amber-800 text-[11px] font-bold px-2 py-0.5 rounded border border-amber-300">OECB</span>
                                                     )}
                                                     <span className="text-xs text-slate-400 font-mono border border-slate-200 px-2 py-0.5 rounded bg-slate-50">{tx.hospital_number}</span>
                                                 </h4>
@@ -434,7 +559,7 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                                                 
                                                 return (
                                                     <div key={i} className={`border rounded-lg p-2.5 text-center cursor-default transition-all duration-500 ${isApproved ? 'bg-emerald-50 border-emerald-300 shadow-sm' : 'bg-slate-50 border-slate-200'}`}>
-                                                        <div className={`text-[10px] font-black uppercase mb-1 truncate transition-colors ${isApproved ? 'text-emerald-700' : 'text-slate-500'}`}>
+                                                        <div className={`text-[11px] font-black uppercase mb-1 truncate transition-colors ${isApproved ? 'text-emerald-700' : 'text-slate-500'}`}>
                                                             {dept}
                                                         </div>
                                                         
@@ -445,7 +570,7 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                                                             </span>
                                                         ) : (
                                                             <span className="text-amber-500 text-xs font-bold flex items-center justify-center space-x-1">
-                                                                <svg className="w-3 h-3 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                                                <svg className="w-3 h-3 animate-pulse motion-reduce:animate-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                                                                 <span>Pending</span>
                                                             </span>
                                                         )}
@@ -462,52 +587,61 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
             </div>
 
             {/* OXYGEN MODAL WITH "type=button" FIX */}
-            {showOxygenModal && (
-                <div className="fixed inset-0 z-[400] flex items-center justify-center bg-slate-900/70 backdrop-blur-sm p-4">
-                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in duration-200">
-                        <div className="px-6 py-4 border-b border-slate-200 bg-slate-50">
-                            <h3 className="text-lg font-bold text-slate-800">Oxygen Remarks</h3>
-                        </div>
-                        <div className="p-6">
-                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">
-                                Provide notes for Cardio Pulmo
-                            </label>
-                            <textarea
-                                rows="4"
-                                value={form.oxygen_remarks}
-                                onChange={e => setForm({...form, oxygen_remarks: e.target.value})}
-                                placeholder="e.g., Used 1 tank for 4 hours..."
-                                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 resize-none"
-                                autoFocus
-                            ></textarea>
-                            <div className="mt-4 flex justify-end gap-3">
-                                <button 
-                                    type="button" // Fixes the bug where clicking cancel accidentally submitted the whole form!
-                                    onClick={() => { setForm({...form, has_oxygen: 'No', oxygen_remarks: ''}); setShowOxygenModal(false); }}
-                                    className="px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
-                                >
-                                    Cancel
-                                </button>
-                                <button 
-                                    type="button" // Fixes accidental form submission
-                                    onClick={() => setShowOxygenModal(false)}
-                                    className="px-4 py-2 text-sm font-bold bg-teal-600 text-white hover:bg-teal-700 rounded-lg shadow-sm transition-colors"
-                                >
-                                    Save Notes
-                                </button>
-                            </div>
-                        </div>
+            <Modal
+                show={showOxygenModal}
+                onClose={() => setShowOxygenModal(false)}
+                maxWidth="md"
+                zIndexClass="z-[400]"
+            >
+                <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+                    <h3 className="text-lg font-bold text-slate-800">Oxygen Remarks</h3>
+                    <button
+                        type="button"
+                        aria-label="Close modal"
+                        onClick={() => setShowOxygenModal(false)}
+                        className="text-slate-400 hover:text-slate-600 p-1 rounded-lg transition-colors"
+                    >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+                <div className="p-6">
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">
+                        Provide notes for Cardio Pulmo
+                    </label>
+                    <textarea
+                        rows="4"
+                        value={form.oxygen_remarks}
+                        onChange={e => setForm({...form, oxygen_remarks: e.target.value})}
+                        placeholder="e.g., Used 1 tank for 4 hours..."
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 resize-none"
+                        autoFocus
+                    ></textarea>
+                    <div className="mt-4 flex justify-end gap-3">
+                        <button 
+                            type="button" // Fixes the bug where clicking cancel accidentally submitted the whole form!
+                            onClick={() => { setForm({...form, has_oxygen: 'No', oxygen_remarks: ''}); setShowOxygenModal(false); }}
+                            className="px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                        >
+                            Cancel
+                        </button>
+                        <button 
+                            type="button" // Fixes accidental form submission
+                            onClick={() => setShowOxygenModal(false)}
+                            className="px-4 py-2 text-sm font-bold bg-teal-600 text-white hover:bg-teal-700 rounded-lg shadow-sm transition-colors"
+                        >
+                            Save Notes
+                        </button>
                     </div>
                 </div>
-            )}
+            </Modal>
 
             {toastMessage && (
-                <div className="fixed top-6 right-6 z-[200] flex items-center bg-teal-600 text-white px-5 py-3.5 rounded-xl shadow-2xl animate-in slide-in-from-top-5 fade-in duration-300">
+                <div className="fixed top-6 right-6 z-[200] flex items-center bg-teal-600 text-white px-5 py-3.5 rounded-xl shadow-2xl animate-slide-in-top motion-reduce:animate-none">
                     <div className="bg-teal-500 rounded-full p-1 mr-3">
                         <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
                     </div>
                     <span className="font-bold text-sm tracking-wide">{toastMessage}</span>
-                    <button onClick={() => setToastMessage(null)} className="ml-4 text-teal-200 hover:text-white transition-colors">
+                    <button type="button" aria-label="Dismiss notification" onClick={() => setToastMessage(null)} className="ml-4 text-teal-200 hover:text-white transition-colors">
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                     </button>
                 </div>

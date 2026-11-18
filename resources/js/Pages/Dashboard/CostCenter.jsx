@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Head, router } from '@inertiajs/react';
 import PortalLayout from '@/Layouts/PortalLayout';
+import Modal from '@/Components/Modal';
 import axios from 'axios';
 import PromissoryMasterlist from '@/Components/PromissoryMasterlist';
 import CreditReportsModule from '@/Components/CreditReportsModule';
@@ -14,7 +15,8 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
     const [isLoadingData, setIsLoadingData] = useState(false);
     const [modalData, setModalData] = useState(null);
     const [activeEnccode, setActiveEnccode] = useState(null);
-    const [toastMessage, setToastMessage] = useState(null); 
+    const [toastMessage, setToastMessage] = useState(null);
+    const [toastIsError, setToastIsError] = useState(false);
     
     const [isConfirmOpen, setIsConfirmOpen] = useState(false);
     const [isClearing, setIsClearing] = useState(false);
@@ -121,8 +123,9 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
             }
         } catch (error) {
             console.error("Failed to load clearance data", error);
+            setToastIsError(true);
             setToastMessage("Failed to load records from iHomis. Please try again.");
-            setTimeout(() => setToastMessage(null), 3000);
+            setTimeout(() => setToastMessage(null), 4000);
             setIsModalOpen(false);
         } finally {
             setIsLoadingData(false);
@@ -169,6 +172,7 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
         }, {
             preserveScroll: true,
             onSuccess: () => {
+                setToastIsError(false);
                 setToastMessage(`${department} successfully cleared!`);
                 setIsConfirmOpen(false);
                 setIsModalOpen(false);
@@ -176,10 +180,16 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                 setTimeout(() => setToastMessage(null), 3000);
             },
             onError: (errors) => {
-                setToastMessage('Failed to clear department. Check console.');
+                const serverMessage = Object.values(errors || {}).flat().find(Boolean);
+                setToastIsError(true);
+                setToastMessage(
+                    serverMessage
+                        ? `Could not clear ${department}: ${serverMessage}`
+                        : `Could not clear ${department}. Please try again or refresh the page.`
+                );
                 setIsConfirmOpen(false);
                 setIsClearing(false);
-                setTimeout(() => setToastMessage(null), 3000);
+                setTimeout(() => setToastMessage(null), 5000);
                 console.error(errors);
             }
         });
@@ -195,11 +205,11 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                 <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 flex flex-col shrink-0 w-full md:w-[260px]">
                     <div className="mb-8 px-2 pt-2 flex justify-between items-start border-b border-slate-100 pb-4">
                         <div>
-                            <h2 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Verification Portal</h2>
+                            <h2 className="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-1">Verification Portal</h2>
                             <div className="text-xl font-bold text-slate-800">{department}</div>
                         </div>
                         
-                        <button onClick={() => setSoundEnabled(!soundEnabled)} className="text-slate-400 hover:text-teal-500 transition-colors p-1 bg-slate-50 rounded-md border border-slate-200 shadow-sm" title={soundEnabled ? "Mute Alerts" : "Enable Alerts"}>
+                        <button type="button" onClick={() => setSoundEnabled(!soundEnabled)} className="text-slate-400 hover:text-teal-500 transition-colors p-1 bg-slate-50 rounded-md border border-slate-200 shadow-sm" title={soundEnabled ? "Mute Alerts" : "Enable Alerts"} aria-label={soundEnabled ? "Mute alerts" : "Enable alerts"}>
                             {soundEnabled ? (
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5 10c0-1.1.9-2 2-2h2l4-4v16l-4-4H7a2 2 0 01-2-2v-4z"></path></svg>
                             ) : (
@@ -214,7 +224,7 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                                 <span>Pending Requests</span>
                             </div>
-                            {pendingPatients.length > 0 && <span className="bg-rose-500 text-white text-[10px] px-2 py-0.5 rounded-full">{pendingPatients.length}</span>}
+                            {pendingPatients.length > 0 && <span className="bg-rose-500 text-white text-[11px] px-2 py-0.5 rounded-full">{pendingPatients.length}</span>}
                         </button>
 
                         <button onClick={() => setActiveModule('completed')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg text-sm font-bold transition-all ${activeModule === 'completed' ? 'bg-teal-50 text-teal-700 border-l-4 border-teal-500 shadow-sm' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 border-l-4 border-transparent'}`}>
@@ -229,7 +239,7 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
                                         <span>Promissory & Balances</span>
                                     </div>
-                                    <span className="bg-slate-200 text-slate-700 text-[10px] px-2 py-0.5 rounded-full font-bold">57k+</span>
+                                    <span className="bg-slate-200 text-slate-700 text-[11px] px-2 py-0.5 rounded-full font-bold">57k+</span>
                                 </button>
 
                                 <button onClick={() => setActiveModule('reports')} className={`w-full flex items-center justify-between px-4 py-3 rounded-lg text-sm font-bold transition-all ${activeModule === 'reports' ? 'bg-teal-50 text-teal-700 border-l-4 border-teal-500 shadow-sm' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 border-l-4 border-transparent'}`}>
@@ -237,7 +247,7 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
                                         <span>Reports & SAA Budgets</span>
                                     </div>
-                                    <span className="bg-teal-100 text-teal-800 text-[10px] px-2 py-0.5 rounded-full font-bold">80 SAA</span>
+                                    <span className="bg-teal-100 text-teal-800 text-[11px] px-2 py-0.5 rounded-full font-bold">80 SAA</span>
                                 </button>
                             </>
                         )}
@@ -308,7 +318,7 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                                                     <td className="p-4 text-slate-600 text-xs">
                                                         {patient.ward && (
                                                             <div className="mb-1">
-                                                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-teal-50 text-teal-700 border border-teal-200">
+                                                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-teal-50 text-teal-700 border border-teal-200">
                                                                     {patient.ward}
                                                                 </span>
                                                             </div>
@@ -322,7 +332,7 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
 
                                                     <td className="p-4 text-center">
                                                         {activeModule === 'pending' ? (
-                                                            <div className={`inline-flex items-center space-x-1 px-2.5 py-1 rounded-md text-xs font-bold ${breached ? 'bg-rose-100 text-rose-700 animate-pulse' : 'bg-slate-100 text-slate-600'}`}>
+                                                            <div className={`inline-flex items-center space-x-1 px-2.5 py-1 rounded-md text-xs font-bold ${breached ? 'bg-rose-100 text-rose-700 animate-pulse motion-reduce:animate-none' : 'bg-slate-100 text-slate-600'}`}>
                                                                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                                                                 <span>{formatWaitTime(waitMinutes)}</span>
                                                             </div>
@@ -346,7 +356,7 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                                                                 </button>
                                                             </div>
                                                         ) : (
-                                                            <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded">Overall: {patient.overall_status}</span>
+                                                            <span className="text-[11px] font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded">Overall: {patient.overall_status}</span>
                                                         )}
                                                     </td>
                                                 </tr>
@@ -362,23 +372,26 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
             </div>
 
             {/* --- INSPECTION MODAL --- */}
-            {isModalOpen && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/70 backdrop-blur-sm p-4 sm:p-6 transition-opacity">
-                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200" style={{ maxHeight: '90vh' }}>
-                        
-                        <div className="px-6 py-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
-                            <div>
-                                <h3 className="text-xl font-bold text-slate-800">{department} Review Items</h3>
-                                <p className="text-xs text-slate-500 font-medium mt-1">Patient Encounter: <span className="font-mono bg-slate-200 px-1.5 py-0.5 rounded">{activeEnccode}</span></p>
-                            </div>
-                            <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-rose-500 bg-white border border-slate-200 rounded-md p-1.5 transition-colors">
-                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                            </button>
-                        </div>
+            <Modal
+                show={isModalOpen}
+                onClose={() => setIsModalOpen(false)}
+                maxWidth="5xl"
+                zIndexClass="z-[100]"
+                panelClassName="flex flex-col max-h-[90vh]"
+            >
+                <div className="px-6 py-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+                    <div>
+                        <h3 className="text-xl font-bold text-slate-800">{department} Review Items</h3>
+                        <p className="text-xs text-slate-500 font-medium mt-1">Patient Encounter: <span className="font-mono bg-slate-200 px-1.5 py-0.5 rounded">{activeEnccode}</span></p>
+                    </div>
+                    <button type="button" aria-label="Close modal" onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-rose-500 bg-white border border-slate-200 rounded-md p-1.5 transition-colors">
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
 
-                        <div className="p-6 overflow-y-auto bg-slate-50 flex-1">
-                            {isLoadingData ? (
-                                <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm animate-pulse">
+                <div className="p-6 overflow-y-auto bg-slate-50 flex-1">
+                    {isLoadingData ? (
+                        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm animate-pulse motion-reduce:animate-none">
                                     <div className="flex justify-between items-center mb-6 border-b border-slate-100 pb-4">
                                         <div className="flex items-center space-x-3">
                                             <div className="w-10 h-10 bg-slate-200 rounded-lg"></div>
@@ -441,7 +454,7 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                                     {isCreditDept && (
                                         <div className="p-4 bg-white border-b border-slate-200">
                                             <div className="flex justify-between items-center mb-2">
-                                                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Promissory Note & Financial Balance Check</span>
+                                                <span className="text-[11px] font-black uppercase tracking-wider text-slate-400">Promissory Note & Financial Balance Check</span>
                                                 {isCheckingCredit && (
                                                     <span className="text-xs text-teal-600 font-bold flex items-center gap-1">
                                                         <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
@@ -454,12 +467,12 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                                                 <div className="bg-rose-50 border-2 border-rose-300 rounded-lg p-3 text-rose-900">
                                                     <div className="flex items-center justify-between">
                                                         <div className="flex items-center space-x-2">
-                                                            <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping"></span>
+                                                            <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping motion-reduce:animate-none"></span>
                                                             <span className="font-black text-sm uppercase text-rose-800">
                                                                 Outstanding Promissory Note / Balance: ₱{patientCreditStatus.total_balance?.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                                                             </span>
                                                         </div>
-                                                        <span className="bg-rose-600 text-white font-bold text-[10px] px-2 py-0.5 rounded-full uppercase">Action Required</span>
+                                                        <span className="bg-rose-600 text-white font-bold text-[11px] px-2 py-0.5 rounded-full uppercase">Action Required</span>
                                                     </div>
                                                     <div className="mt-1 text-xs text-rose-700 font-medium">
                                                         This patient has active promissory note(s) or an unsettled balance on record. Review the notes below before clearing.
@@ -515,7 +528,7 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                                             
                                             {Boolean(modalData?.transaction?.has_oxygen) && department === 'Cardio Pulmo' ? (
                                                 <div className="bg-sky-50 border border-sky-200 rounded-lg p-3 shadow-sm">
-                                                    <div className="text-[10px] font-black text-sky-700 uppercase tracking-widest mb-1 flex items-center">
+                                                    <div className="text-[11px] font-black text-sky-700 uppercase tracking-widest mb-1 flex items-center">
                                                         <svg className="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                                                         ER Oxygen Notes
                                                     </div>
@@ -570,54 +583,66 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                                 </div>
                             ) : null}
                         </div>
-                    </div>
-                </div>
-            )}
+            </Modal>
 
             {/* --- CUSTOM CONFIRMATION MODAL --- */}
-            {isConfirmOpen && (
-                <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity">
-                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in duration-200">
-                        <div className="p-6 text-center">
-                            <div className="w-16 h-16 bg-teal-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-teal-100 shadow-sm">
-                                <svg className="w-8 h-8 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                            </div>
-                            <h3 className="text-xl font-bold text-slate-800 mb-2">Confirm Clearance</h3>
-                            <p className="text-sm text-slate-500 mb-6 leading-relaxed">
-                                Are you sure you want to clear <strong>{department}</strong>? This action will be officially logged under your account.
-                            </p>
-                            <div className="flex space-x-3">
-                                <button 
-                                    onClick={() => setIsConfirmOpen(false)}
-                                    className="flex-1 px-4 py-2.5 bg-slate-100 text-slate-700 font-bold rounded-lg hover:bg-slate-200 transition-colors border border-slate-200"
-                                >
-                                    Cancel
-                                </button>
-                                <button 
-                                    onClick={executeClearDepartment}
-                                    disabled={isClearing}
-                                    className="flex-1 px-4 py-2.5 bg-teal-600 text-white font-bold rounded-lg hover:bg-teal-700 transition-colors shadow-sm flex justify-center items-center"
-                                >
-                                    {isClearing ? (
-                                        <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                                    ) : (
-                                        'Yes, Clear'
-                                    )}
-                                </button>
-                            </div>
-                        </div>
+            <Modal
+                show={isConfirmOpen}
+                onClose={() => { if (!isClearing) setIsConfirmOpen(false); }}
+                closeable={!isClearing}
+                maxWidth="sm"
+                zIndexClass="z-[200]"
+            >
+                <div className="p-6 text-center">
+                    <div className="w-16 h-16 bg-teal-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-teal-100 shadow-sm">
+                        <svg className="w-8 h-8 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    </div>
+                    <h3 className="text-xl font-bold text-slate-800 mb-2">Confirm Clearance</h3>
+                    <p className="text-sm text-slate-500 mb-6 leading-relaxed">
+                        Are you sure you want to clear <strong>{department}</strong>? This action will be officially logged under your account.
+                    </p>
+                    <div className="flex space-x-3">
+                        <button 
+                            type="button"
+                            onClick={() => setIsConfirmOpen(false)}
+                            disabled={isClearing}
+                            className="flex-1 px-4 py-2.5 bg-slate-100 text-slate-700 font-bold rounded-lg hover:bg-slate-200 transition-colors border border-slate-200 disabled:opacity-50"
+                        >
+                            Cancel
+                        </button>
+                        <button 
+                            type="button"
+                            onClick={executeClearDepartment}
+                            disabled={isClearing}
+                            className="flex-1 px-4 py-2.5 bg-teal-600 text-white font-bold rounded-lg hover:bg-teal-700 transition-colors shadow-sm flex justify-center items-center disabled:opacity-50"
+                        >
+                            {isClearing ? (
+                                <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                            ) : (
+                                'Yes, Clear'
+                            )}
+                        </button>
                     </div>
                 </div>
-            )}
+            </Modal>
 
             {/* --- SLIDING TOAST NOTIFICATION --- */}
             {toastMessage && (
-                <div className="fixed top-6 right-6 z-[300] flex items-center bg-teal-600 text-white px-5 py-3.5 rounded-xl shadow-2xl animate-in slide-in-from-top-5 fade-in duration-300">
-                    <div className="bg-teal-500 rounded-full p-1 mr-3">
-                        <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
+                <div
+                    role={toastIsError ? 'alert' : 'status'}
+                    className={`fixed top-6 right-6 z-[300] flex items-center text-white px-5 py-3.5 rounded-xl shadow-2xl animate-slide-in-top motion-reduce:animate-none ${
+                        toastIsError ? 'bg-rose-600' : 'bg-teal-600'
+                    }`}
+                >
+                    <div className={`rounded-full p-1 mr-3 ${toastIsError ? 'bg-rose-500' : 'bg-teal-500'}`}>
+                        {toastIsError ? (
+                            <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 9v2m0 4h.01M10.29 3.86l-7.1 12.26A2 2 0 004.92 19h14.16a2 2 0 001.73-2.88l-7.1-12.26a2 2 0 00-3.42 0z"></path></svg>
+                        ) : (
+                            <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
+                        )}
                     </div>
                     <span className="font-bold text-sm tracking-wide">{toastMessage}</span>
-                    <button onClick={() => setToastMessage(null)} className="ml-4 text-teal-200 hover:text-white transition-colors">
+                    <button type="button" aria-label="Dismiss notification" onClick={() => setToastMessage(null)} className={`ml-4 transition-colors ${toastIsError ? 'text-rose-200 hover:text-white' : 'text-teal-200 hover:text-white'}`}>
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                     </button>
                 </div>

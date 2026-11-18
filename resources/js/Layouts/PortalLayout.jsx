@@ -39,7 +39,7 @@ export default function PortalLayout({ children }) {
 
                 {/* Right Actions */}
                 <div className="flex items-center space-x-6">
-                    <Link href="/dashboard" className="text-sm font-bold text-white hover:text-teal-400 transition-colors">
+                    <Link href={route('dashboard')} className="text-sm font-bold text-white hover:text-teal-400 transition-colors">
                         Dashboard
                     </Link>
 
@@ -52,12 +52,9 @@ export default function PortalLayout({ children }) {
                     <div className="flex items-center space-x-3">
                         {/* User Badge */}
                         <div className="bg-slate-800 rounded-full px-4 py-1.5 flex items-center border border-slate-700">
-                            <span className="relative flex h-2 w-2 mr-2">
-                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal-400 opacity-75"></span>
-                                <span className="relative inline-flex rounded-full h-2 w-2 bg-teal-500"></span>
-                            </span>
+                            <span className="inline-flex rounded-full h-2 w-2 mr-2 bg-teal-400" aria-hidden="true"></span>
                             <span className="text-xs font-extrabold tracking-wide uppercase">
-                                {auth?.user?.name || 'ALIZA MAE ARBATIN'}
+                                {auth?.user?.name || 'Staff'}
                             </span>
                         </div>
 

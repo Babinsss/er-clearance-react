@@ -24,7 +24,7 @@ export default function TurnaroundChart() {
 
     if (loading) {
         return (
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 animate-pulse">
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 animate-pulse motion-reduce:animate-none">
                 <div className="h-5 w-48 bg-slate-200 rounded mb-2"></div>
                 <div className="h-3 w-64 bg-slate-100 rounded mb-8"></div>
                 <div className="space-y-5">

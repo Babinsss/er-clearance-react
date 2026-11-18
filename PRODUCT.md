@@ -52,7 +52,7 @@ Unlike generic ticketing or standalone hospital forms, RMPH Clearance connects d
 
 ## Evidence on Hand
 
-- **Existing Web Application:** Laravel 12 + Inertia.js v2 + React 18 codebase in `c:\laragon\www\rmph-clearance` with routes in `routes/web.php` and role-specific Inertia views under `resources/js/Pages/`.
+- **Existing Web Application:** Laravel 12 + Inertia.js v2 + React 18 codebase in `c:\laragon\www\er-clearance-react` with routes in `routes/web.php` and role-specific Inertia views under `resources/js/Pages/`.
 - **Assets:**
   - Logos: `public/images/capiz.jpg`, `public/images/rmph.jpg`, `public/images/rmph.jfif`
   - Audio alerts: `public/sounds/check.mp3`, `public/sounds/epic_26.mp3`, `public/sounds/notif.wav`

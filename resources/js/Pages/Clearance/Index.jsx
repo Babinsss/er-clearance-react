@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Head, router, Link, usePage } from '@inertiajs/react';
 import PortalLayout from '@/Layouts/PortalLayout';
+import Modal from '@/Components/Modal';
+import ConfirmDialog from '@/Components/ConfirmDialog';
 
 export default function Index({ enccode, transaction = {}, labOrders = [], cardioOrders = [], radioOrders = [], pharmacyOrders = [], creditOrders = [], clearedDepartments = [] }) {
     const { auth } = usePage().props;
@@ -23,6 +25,7 @@ export default function Index({ enccode, transaction = {}, labOrders = [], cardi
     // --- NEW: Custom Modal States ---
     const [confirmModal, setConfirmModal] = useState({ show: false, department: null });
     const [isProcessing, setIsProcessing] = useState(false);
+    const [errorDialogMessage, setErrorDialogMessage] = useState('');
 
     useEffect(() => {
         setIsLabReady(labOrders.length === 0 || labOrders.every(order => order.status === 'S'));
@@ -57,9 +60,10 @@ export default function Index({ enccode, transaction = {}, labOrders = [], cardi
                 setIsProcessing(false);
                 setConfirmModal({ show: false, department: null });
             },
-            onError: () => {
+            onError: (errors) => {
                 setIsProcessing(false);
-                alert("An error occurred while communicating with the server.");
+                const serverMessage = Object.values(errors || {}).flat().find(Boolean);
+                setErrorDialogMessage(serverMessage || 'An error occurred while communicating with the server. Please try again.');
             }
         });
     };
@@ -168,68 +172,87 @@ export default function Index({ enccode, transaction = {}, labOrders = [], cardi
                 <Head title={`Clearance - ${enccode}`} />
                 
                 {/* --- CUSTOM CONFIRMATION MODAL --- */}
-                {confirmModal.show && (
-                    <div className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-opacity">
-                        <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-200 flex flex-col transform transition-all animate-fade-in-up">
-                            
-                            {/* Modal Header */}
-                            <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
-                                <div>
-                                    <h3 className="text-lg font-black text-slate-800 uppercase tracking-wide">
-                                        Confirm Clearance
-                                    </h3>
-                                    <p className="text-xs text-slate-500 font-medium mt-0.5">Final Verification Step</p>
-                                </div>
-                                <button onClick={closeConfirm} disabled={isProcessing} className="text-slate-400 hover:text-slate-700 bg-slate-200 hover:bg-slate-300 rounded-full p-1.5 transition-colors disabled:opacity-50">
-                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                                </button>
-                            </div>
-
-                            {/* Modal Body */}
-                            <div className="p-8 bg-white text-center">
-                                <div className="w-16 h-16 bg-teal-100 rounded-full flex items-center justify-center mx-auto mb-5 shadow-inner">
-                                    <svg className="w-8 h-8 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                                    </svg>
-                                </div>
-                                <p className="text-slate-700 font-medium text-base leading-relaxed">
-                                    Are you sure you want to verify and clear <span className="font-extrabold text-slate-900">{confirmModal.department}</span>?
-                                    <br/>
-                                    <span className="text-sm text-slate-500 mt-3 inline-block bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-100">
-                                        This action will be permanently logged under your name.
-                                    </span>
-                                </p>
-                            </div>
-
-                            {/* Modal Footer */}
-                            <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end space-x-3 shrink-0">
-                                <button 
-                                    onClick={closeConfirm} 
-                                    disabled={isProcessing} 
-                                    className="px-5 py-2.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold rounded-lg text-sm transition-colors shadow-sm disabled:opacity-50"
-                                >
-                                    Cancel
-                                </button>
-                                
-                                <button 
-                                    onClick={executeClearance} 
-                                    disabled={isProcessing} 
-                                    className="px-5 py-2.5 font-bold rounded-lg text-sm transition-all shadow-sm flex items-center justify-center min-w-[160px] bg-teal-600 hover:bg-teal-700 text-white border border-teal-700 hover:shadow-md disabled:opacity-75 disabled:cursor-wait"
-                                >
-                                    {isProcessing ? (
-                                        <span className="flex items-center space-x-2">
-                                            <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                                            <span>Processing...</span>
-                                        </span>
-                                    ) : (
-                                        'Yes, Clear Station'
-                                    )}
-                                </button>
-                            </div>
+                <Modal
+                    show={confirmModal.show}
+                    onClose={closeConfirm}
+                    closeable={!isProcessing}
+                    maxWidth="lg"
+                    zIndexClass="z-[150]"
+                    panelClassName="border border-slate-200 flex flex-col"
+                >
+                    {/* Modal Header */}
+                    <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
+                        <div>
+                            <h3 className="text-lg font-black text-slate-800 uppercase tracking-wide">
+                                Confirm Clearance
+                            </h3>
+                            <p className="text-xs text-slate-500 font-medium mt-0.5">Final Verification Step</p>
                         </div>
+                        <button
+                            type="button"
+                            aria-label="Close modal"
+                            onClick={closeConfirm}
+                            disabled={isProcessing}
+                            className="text-slate-400 hover:text-slate-700 bg-slate-200 hover:bg-slate-300 rounded-full p-1.5 transition-colors disabled:opacity-50"
+                        >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                        </button>
                     </div>
-                )}
+
+                    {/* Modal Body */}
+                    <div className="p-8 bg-white text-center">
+                        <div className="w-16 h-16 bg-teal-100 rounded-full flex items-center justify-center mx-auto mb-5 shadow-inner">
+                            <svg className="w-8 h-8 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                        </div>
+                        <p className="text-slate-700 font-medium text-base leading-relaxed">
+                            Are you sure you want to verify and clear <span className="font-extrabold text-slate-900">{confirmModal.department}</span>?
+                            <br/>
+                            <span className="text-sm text-slate-500 mt-3 inline-block bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-100">
+                                This action will be permanently logged under your name.
+                            </span>
+                        </p>
+                    </div>
+
+                    {/* Modal Footer */}
+                    <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end space-x-3 shrink-0">
+                        <button 
+                            type="button"
+                            onClick={closeConfirm} 
+                            disabled={isProcessing} 
+                            className="px-5 py-2.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold rounded-lg text-sm transition-colors shadow-sm disabled:opacity-50"
+                        >
+                            Cancel
+                        </button>
+                        
+                        <button 
+                            type="button"
+                            onClick={executeClearance} 
+                            disabled={isProcessing} 
+                            className="px-5 py-2.5 font-bold rounded-lg text-sm transition-all shadow-sm flex items-center justify-center min-w-[160px] bg-teal-600 hover:bg-teal-700 text-white border border-teal-700 hover:shadow-md disabled:opacity-75 disabled:cursor-wait"
+                        >
+                            {isProcessing ? (
+                                <span className="flex items-center space-x-2">
+                                    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                    <span>Processing...</span>
+                                </span>
+                            ) : (
+                                'Yes, Clear Station'
+                            )}
+                        </button>
+                    </div>
+                </Modal>
                 {/* --- END CUSTOM MODAL --- */}
+
+                <ConfirmDialog
+                    show={Boolean(errorDialogMessage)}
+                    onClose={() => setErrorDialogMessage('')}
+                    title="Clearance Request Failed"
+                    message={errorDialogMessage}
+                    tone="danger"
+                    alertOnly
+                />
 
                 <div className="bg-white border-b border-gray-200 shadow-sm mb-8 px-8 py-6">
                     <div className="max-w-7xl mx-auto">

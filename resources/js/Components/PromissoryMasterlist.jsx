@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
+import Modal from '@/Components/Modal';
+import ConfirmDialog from '@/Components/ConfirmDialog';
 
 export default function PromissoryMasterlist({ onSelectPatient = null, initialPatientName = '', onOpenReports = null }) {
     const [notes, setNotes] = useState([]);
@@ -66,6 +68,7 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [editingNote, setEditingNote] = useState(null);
     const [submitting, setSubmitting] = useState(false);
+    const [isSettleConfirmOpen, setIsSettleConfirmOpen] = useState(false);
     const [feedback, setFeedback] = useState(null);
 
     const emptyForm = {
@@ -287,7 +290,7 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
         const isCustom = g.isCustom ?? (g.grantor ? !isGrantorInList(g.grantor) : false);
 
         return (
-            <div key={idx} className="bg-white p-3 rounded-xl border border-teal-100 shadow-sm space-y-2 animate-in fade-in">
+            <div key={idx} className="bg-white p-3 rounded-xl border border-teal-100 shadow-sm space-y-2 animate-fade-in motion-reduce:animate-none">
                 <div className="flex items-start gap-2">
                     <div className="w-6 h-6 rounded-full bg-teal-100 text-teal-800 font-black text-[11px] flex items-center justify-center shrink-0 mt-6">
                         {idx + 1}
@@ -295,7 +298,7 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
 
                     <div className="flex-1">
                         <div className="flex justify-between items-center mb-1">
-                            <label className="block text-[10px] text-slate-500 uppercase font-black tracking-wider">
+                            <label className="block text-[11px] text-slate-500 uppercase font-black tracking-wider">
                                 Grantor / Sponsor #{idx + 1}
                             </label>
                             <div className="flex items-center space-x-2">
@@ -303,7 +306,7 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
                                     <button
                                         type="button"
                                         onClick={onOpenReports}
-                                        className="text-[10px] text-emerald-600 hover:text-emerald-800 font-bold"
+                                        className="text-[11px] text-emerald-600 hover:text-emerald-800 font-bold"
                                         title="Encode or view SAA funds in Reports"
                                     >
                                         + Encode SAA
@@ -312,7 +315,7 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
                                 <button
                                     type="button"
                                     onClick={() => handleGrantorChange(idx, 'isCustom', !isCustom)}
-                                    className="text-[10px] text-teal-600 hover:text-teal-800 font-bold underline"
+                                    className="text-[11px] text-teal-600 hover:text-teal-800 font-bold underline"
                                 >
                                     {isCustom ? '← Select from SAA List' : '✍️ Type Custom'}
                                 </button>
@@ -363,7 +366,7 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
 
                         {/* SAA and Category Badges */}
                         {matched && (
-                            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px]">
+                            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
                                 {matched.saa_number && (
                                     <span className="px-1.5 py-0.5 bg-blue-50 text-blue-800 rounded font-mono font-bold border border-blue-200">
                                         🏷️ SAA NO: {matched.saa_number}
@@ -382,7 +385,7 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
                     </div>
 
                     <div className="w-36 sm:w-44">
-                        <label className="block text-[10px] text-slate-500 uppercase font-black tracking-wider mb-1">
+                        <label className="block text-[11px] text-slate-500 uppercase font-black tracking-wider mb-1">
                             Amount (₱)
                         </label>
                         <input
@@ -400,6 +403,7 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
                             type="button"
                             onClick={() => handleRemoveGrantor(idx)}
                             title="Remove Grantor"
+                            aria-label="Remove grantor"
                             className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
                         >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
@@ -478,9 +482,13 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
         }
     };
 
-    const handleMarkSettled = async () => {
+    const handleMarkSettled = () => {
         if (!editingNote) return;
-        if (!confirm(`Mark promissory note for ${editingNote.patient_name} as FULLY SETTLED?\n\nThis will set the remaining balance to ₱0.00.`)) return;
+        setIsSettleConfirmOpen(true);
+    };
+
+    const executeMarkSettled = async () => {
+        if (!editingNote) return;
         setSubmitting(true);
         try {
             await axios.put(`/credit-promissory/notes/${editingNote.id}`, {
@@ -490,6 +498,7 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
                 remarks: (form.remarks ? form.remarks + ' | ' : '') + 'SETTLED on ' + new Date().toLocaleDateString()
             });
             showToast('Patient record marked as Settled!');
+            setIsSettleConfirmOpen(false);
             setIsEditModalOpen(false);
             setEditingNote(null);
             fetchNotes();
@@ -521,7 +530,7 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
             
             {/* TOAST ALERT */}
             {feedback && (
-                <div className={`fixed top-5 right-5 z-[500] px-4 py-3 rounded-xl shadow-xl text-white font-bold text-sm flex items-center space-x-2 animate-in slide-in-from-top-4 ${feedback.type === 'error' ? 'bg-rose-600' : 'bg-emerald-600'}`}>
+                <div className={`fixed top-5 right-5 z-[500] px-4 py-3 rounded-xl shadow-xl text-white font-bold text-sm flex items-center space-x-2 animate-slide-in-top motion-reduce:animate-none ${feedback.type === 'error' ? 'bg-rose-600' : 'bg-emerald-600'}`}>
                     <span>{feedback.msg}</span>
                 </div>
             )}
@@ -529,28 +538,28 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
             {/* TOP STATS CARDS */}
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 shadow-sm">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Total Records</span>
+                    <span className="text-[11px] font-black uppercase tracking-wider text-slate-400">Total Records</span>
                     <div className="text-xl font-black text-slate-800 mt-0.5">{stats.total_count.toLocaleString()}</div>
                     <span className="text-[11px] text-slate-500 font-semibold">Across all departments</span>
                 </div>
                 <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 shadow-sm">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-600">With Remaining Balance</span>
+                    <span className="text-[11px] font-black uppercase tracking-wider text-amber-600">With Remaining Balance</span>
                     <div className="text-xl font-black text-amber-800 mt-0.5">{stats.with_balance_count.toLocaleString()}</div>
                     <span className="text-[11px] text-amber-700 font-bold">{formatCurrency(stats.total_balance_amount)}</span>
                 </div>
                 <div className="bg-blue-50 border border-blue-200 rounded-xl p-3.5 shadow-sm">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-blue-600">Promissory Notes</span>
+                    <span className="text-[11px] font-black uppercase tracking-wider text-blue-600">Promissory Notes</span>
                     <div className="text-xl font-black text-blue-800 mt-0.5">{stats.total_pn_count.toLocaleString()}</div>
                     <span className="text-[11px] text-blue-600 font-semibold">PN Signed records</span>
                 </div>
                 <div className="bg-rose-50 border border-rose-200 rounded-xl p-3.5 shadow-sm">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-rose-600">Absconded</span>
+                    <span className="text-[11px] font-black uppercase tracking-wider text-rose-600">Absconded</span>
                     <div className="text-xl font-black text-rose-800 mt-0.5">{stats.total_absconded_count.toLocaleString()}</div>
                     <span className="text-[11px] text-rose-500 font-semibold">Left without settle</span>
                 </div>
                 <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 shadow-sm col-span-2 md:col-span-1 flex flex-col justify-between">
                     <div>
-                        <span className="text-[10px] font-black uppercase tracking-wider text-emerald-600">Quick Actions</span>
+                        <span className="text-[11px] font-black uppercase tracking-wider text-emerald-600">Quick Actions</span>
                         <div className="text-xs font-bold text-emerald-800 mt-0.5">Patient Entry & Reports</div>
                     </div>
                     <div className="mt-2 flex flex-col gap-1.5">
@@ -589,7 +598,7 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
                             className="w-full pl-9 pr-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:bg-white transition-all"
                         />
                         {search && (
-                            <button onClick={() => { setSearch(''); setCurrentPage(1); }} className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600">
+                            <button type="button" aria-label="Clear search" onClick={() => { setSearch(''); setCurrentPage(1); }} className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600">
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                             </button>
                         )}
@@ -597,34 +606,34 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
 
                     {/* Filter Checkbox Toggles */}
                     <div className="flex flex-wrap gap-2 items-center text-xs">
-                        <label className={`cursor-pointer px-3 py-2 rounded-lg border font-bold flex items-center space-x-1.5 transition-all ${hasBalanceOnly ? 'bg-amber-100 text-amber-900 border-amber-300 shadow-sm' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
+                        <label className={`cursor-pointer px-3 py-2 rounded-lg border font-bold flex items-center space-x-1.5 transition-all focus-within:ring-2 focus-within:ring-amber-500 focus-within:ring-offset-1 ${hasBalanceOnly ? 'bg-amber-100 text-amber-900 border-amber-300 shadow-sm' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
                             <input 
                                 type="checkbox" 
                                 checked={hasBalanceOnly} 
                                 onChange={(e) => { setHasBalanceOnly(e.target.checked); setCurrentPage(1); }}
-                                className="hidden"
+                                className="sr-only"
                             />
                             <span className={`w-2 h-2 rounded-full ${hasBalanceOnly ? 'bg-amber-600' : 'bg-slate-300'}`}></span>
                             <span>With Balance Only</span>
                         </label>
 
-                        <label className={`cursor-pointer px-3 py-2 rounded-lg border font-bold flex items-center space-x-1.5 transition-all ${isPnOnly ? 'bg-blue-100 text-blue-900 border-blue-300 shadow-sm' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
+                        <label className={`cursor-pointer px-3 py-2 rounded-lg border font-bold flex items-center space-x-1.5 transition-all focus-within:ring-2 focus-within:ring-blue-500 focus-within:ring-offset-1 ${isPnOnly ? 'bg-blue-100 text-blue-900 border-blue-300 shadow-sm' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
                             <input 
                                 type="checkbox" 
                                 checked={isPnOnly} 
                                 onChange={(e) => { setIsPnOnly(e.target.checked); setCurrentPage(1); }}
-                                className="hidden"
+                                className="sr-only"
                             />
                             <span className={`w-2 h-2 rounded-full ${isPnOnly ? 'bg-blue-600' : 'bg-slate-300'}`}></span>
                             <span>PN Flagged</span>
                         </label>
 
-                        <label className={`cursor-pointer px-3 py-2 rounded-lg border font-bold flex items-center space-x-1.5 transition-all ${isAbscondedOnly ? 'bg-rose-100 text-rose-900 border-rose-300 shadow-sm' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
+                        <label className={`cursor-pointer px-3 py-2 rounded-lg border font-bold flex items-center space-x-1.5 transition-all focus-within:ring-2 focus-within:ring-rose-500 focus-within:ring-offset-1 ${isAbscondedOnly ? 'bg-rose-100 text-rose-900 border-rose-300 shadow-sm' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
                             <input 
                                 type="checkbox" 
                                 checked={isAbscondedOnly} 
                                 onChange={(e) => { setIsAbscondedOnly(e.target.checked); setCurrentPage(1); }}
-                                className="hidden"
+                                className="sr-only"
                             />
                             <span className={`w-2 h-2 rounded-full ${isAbscondedOnly ? 'bg-rose-600' : 'bg-slate-300'}`}></span>
                             <span>Absconded</span>
@@ -696,7 +705,7 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
                                                     {note.entry_date ? new Date(note.entry_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
                                                 </div>
                                                 {note.is_absconded && (
-                                                    <span className="mt-0.5 inline-block bg-rose-100 text-rose-800 text-[9px] font-black px-1.5 py-0.5 rounded border border-rose-300">
+                                                    <span className="mt-0.5 inline-block bg-rose-100 text-rose-800 text-[11px] font-black px-1.5 py-0.5 rounded border border-rose-300">
                                                         ABSCONDED
                                                     </span>
                                                 )}
@@ -704,14 +713,14 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
 
                                             {/* Patient Name */}
                                             <td className="p-3">
-                                                <div className="font-black text-slate-900 text-sm hover:text-teal-700 cursor-pointer" onClick={() => handleOpenEdit(note)}>
+                                                <button type="button" className="text-left font-black text-slate-900 text-sm hover:text-teal-700 cursor-pointer" onClick={() => handleOpenEdit(note)}>
                                                     {note.patient_name}
-                                                </div>
+                                                </button>
                                                 <div className="text-[11px] text-slate-500 truncate max-w-xs" title={note.address}>
                                                     {note.address || 'No address provided'}
                                                 </div>
                                                 {(note.age || note.sex) && (
-                                                    <div className="text-[10px] text-slate-400 font-semibold">
+                                                    <div className="text-[11px] text-slate-400 font-semibold">
                                                         {note.age ? `${note.age} y/o` : ''} {note.sex ? `• ${note.sex}` : ''}
                                                     </div>
                                                 )}
@@ -719,13 +728,13 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
 
                                             {/* Section / Sheet */}
                                             <td className="p-3">
-                                                <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                                                <span className="inline-block px-2 py-0.5 rounded text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
                                                     {categoryLabels[note.sheet_category] || note.sheet_category}
                                                 </span>
                                                 <div className="flex gap-1 mt-1">
-                                                    {note.is_pn && <span className="text-[9px] font-bold text-blue-700 bg-blue-50 px-1 py-0.2 rounded border border-blue-200">PN</span>}
-                                                    {note.is_nbb && <span className="text-[9px] font-bold text-teal-700 bg-teal-50 px-1 py-0.2 rounded border border-teal-200">NBB</span>}
-                                                    {note.is_non_nbb && <span className="text-[9px] font-bold text-purple-700 bg-purple-50 px-1 py-0.2 rounded border border-purple-200">NON-NBB</span>}
+                                                    {note.is_pn && <span className="text-[11px] font-bold text-blue-700 bg-blue-50 px-1 py-0.5 rounded border border-blue-200">PN</span>}
+                                                    {note.is_nbb && <span className="text-[11px] font-bold text-teal-700 bg-teal-50 px-1 py-0.5 rounded border border-teal-200">NBB</span>}
+                                                    {note.is_non_nbb && <span className="text-[11px] font-bold text-purple-700 bg-purple-50 px-1 py-0.5 rounded border border-purple-200">NON-NBB</span>}
                                                 </div>
                                             </td>
 
@@ -735,7 +744,7 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
                                                     {note.pn_amount > 0 ? formatCurrency(note.pn_amount) : formatCurrency(note.hospital_bill_balance)}
                                                 </div>
                                                 {note.pn_amount > 0 && note.hospital_bill_balance > 0 && note.pn_amount !== note.hospital_bill_balance && (
-                                                    <div className="text-[10px] text-slate-400">
+                                                    <div className="text-[11px] text-slate-400">
                                                         Bill: {formatCurrency(note.hospital_bill_balance)}
                                                     </div>
                                                 )}
@@ -748,7 +757,7 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
                                                         <span className="inline-block px-2 py-1 rounded-md text-xs font-black bg-rose-100 text-rose-800 border border-rose-300">
                                                             {formatCurrency(note.remaining_balance)}
                                                         </span>
-                                                        <div className="text-[9px] font-bold text-rose-600 mt-0.5 uppercase tracking-wide">Unpaid Balance</div>
+                                                        <div className="text-[11px] font-bold text-rose-600 mt-0.5 uppercase tracking-wide">Unpaid Balance</div>
                                                     </div>
                                                 ) : (
                                                     <span className="inline-block px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
@@ -765,13 +774,13 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
                                                         {note.fa_grantors && Array.isArray(note.fa_grantors) && note.fa_grantors.length > 1 ? (
                                                             <div className="mt-0.5 space-y-0.5">
                                                                 {note.fa_grantors.map((g, gi) => (
-                                                                    <div key={gi} className="text-[10px] text-slate-600 font-medium leading-tight">
+                                                                    <div key={gi} className="text-[11px] text-slate-600 font-medium leading-tight">
                                                                         • <span className="font-bold">{g.grantor}</span>: {formatCurrency(g.amount)}
                                                                     </div>
                                                                 ))}
                                                             </div>
                                                         ) : (
-                                                            <span className="text-[10px] block text-slate-500 font-semibold truncate max-w-[200px]" title={note.fa_grantor}>
+                                                            <span className="text-[11px] block text-slate-500 font-semibold truncate max-w-[200px]" title={note.fa_grantor}>
                                                                 {note.fa_grantor || 'Assistance'}
                                                             </span>
                                                         )}
@@ -779,7 +788,7 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
                                                 ) : note.cash_paid > 0 ? (
                                                     <div className="text-slate-700">
                                                         <span className="font-bold text-teal-700">{formatCurrency(note.cash_paid)} (Cash)</span>
-                                                        {note.or_number && <span className="text-[10px] block text-slate-400 font-mono">OR: {note.or_number}</span>}
+                                                        {note.or_number && <span className="text-[11px] block text-slate-400 font-mono">OR: {note.or_number}</span>}
                                                     </div>
                                                 ) : (
                                                     <span className="text-slate-400 italic">None</span>
@@ -843,9 +852,14 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
             </div>
 
             {/* --- ADD NEW PROMISSORY NOTE MODAL --- */}
-            {isAddModalOpen && (
-                <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 overflow-y-auto">
-                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden border border-slate-200 animate-in zoom-in duration-200 my-8">
+            <Modal
+                show={isAddModalOpen}
+                onClose={() => { if (!submitting) setIsAddModalOpen(false); }}
+                closeable={!submitting}
+                maxWidth="2xl"
+                zIndexClass="z-[300]"
+                panelClassName="border border-slate-200"
+            >
                         <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
                             <div>
                                 <h3 className="text-base font-black text-slate-800 uppercase tracking-wide">
@@ -853,163 +867,169 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
                                 </h3>
                                 <p className="text-xs text-slate-500 font-medium">Direct Entry (Replaces Excel)</p>
                             </div>
-                            <button onClick={() => setIsAddModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1">
+                            <button type="button" aria-label="Close modal" onClick={() => setIsAddModalOpen(false)} disabled={submitting} className="text-slate-400 hover:text-slate-600 p-1 disabled:opacity-50">
                                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                             </button>
                         </div>
 
-                        <form onSubmit={handleSaveNew} className="p-6 space-y-4 max-h-[75vh] overflow-y-auto text-xs font-semibold">
-                            
-                            {/* Patient & Date */}
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                                <div className="sm:col-span-2">
-                                    <label className="block text-slate-600 uppercase mb-1">Patient Name *</label>
-                                    <input 
-                                        type="text" 
-                                        required 
-                                        value={form.patient_name} 
-                                        onChange={e => setForm({...form, patient_name: e.target.value})} 
-                                        placeholder="e.g. DELA CRUZ, JUAN M." 
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs uppercase"
+                        <form onSubmit={handleSaveNew} className="p-6 space-y-5 max-h-[75vh] overflow-y-auto text-xs font-semibold">
+                            {/* Section 1: Patient & Classification */}
+                            <fieldset className="border border-slate-200 rounded-xl p-4 space-y-3.5 bg-white">
+                                <legend className="px-2 text-[11px] font-black uppercase tracking-wider text-slate-700">
+                                    1. Patient &amp; Classification
+                                </legend>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                    <div className="sm:col-span-2">
+                                        <label className="block text-slate-600 uppercase mb-1">Patient Name *</label>
+                                        <input
+                                            type="text"
+                                            required
+                                            value={form.patient_name}
+                                            onChange={e => setForm({...form, patient_name: e.target.value})}
+                                            placeholder="e.g. DELA CRUZ, JUAN M."
+                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs uppercase"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-slate-600 uppercase mb-1">Entry Date</label>
+                                        <input
+                                            type="date"
+                                            value={form.entry_date}
+                                            onChange={e => setForm({...form, entry_date: e.target.value})}
+                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                                    <div className="sm:col-span-2">
+                                        <label className="block text-slate-600 uppercase mb-1">Sheet / Category</label>
+                                        <select
+                                            value={form.sheet_category}
+                                            onChange={e => setForm({...form, sheet_category: e.target.value})}
+                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                                        >
+                                            <option value="daily trans  2026">2026 Daily Trans</option>
+                                            <option value="daily trans  BUCAS CENTER">BUCAS Center</option>
+                                            <option value="daily transac  CT SCAN">CT Scan</option>
+                                            <option value="daily transaction  DIALYSIS">Dialysis</option>
+                                            <option value="PN GAURANTOR RMPH EMPLOYEE">RMPH Guarantor</option>
+                                            <option value="daily trans  2025">2025 Daily Trans</option>
+                                            <option value="daily trans  2024">2024 Daily Trans</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-slate-600 uppercase mb-1">Age</label>
+                                        <input
+                                            type="text"
+                                            value={form.age}
+                                            onChange={e => setForm({...form, age: e.target.value})}
+                                            placeholder="e.g. 45 or NB"
+                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-slate-600 uppercase mb-1">Sex</label>
+                                        <select
+                                            value={form.sex}
+                                            onChange={e => setForm({...form, sex: e.target.value})}
+                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                                        >
+                                            <option value="M">Male (M)</option>
+                                            <option value="F">Female (F)</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="block text-slate-600 uppercase mb-1">Address</label>
+                                    <input
+                                        type="text"
+                                        value={form.address}
+                                        onChange={e => setForm({...form, address: e.target.value})}
+                                        placeholder="e.g. Poblacion, Roxas City, Capiz"
+                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
                                     />
                                 </div>
-                                <div>
-                                    <label className="block text-slate-600 uppercase mb-1">Date</label>
-                                    <input 
-                                        type="date" 
-                                        value={form.entry_date} 
-                                        onChange={e => setForm({...form, entry_date: e.target.value})} 
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                                    />
-                                </div>
-                            </div>
 
-                            {/* Section Category */}
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                                <div>
-                                    <label className="block text-slate-600 uppercase mb-1">Sheet / Category</label>
-                                    <select 
-                                        value={form.sheet_category} 
-                                        onChange={e => setForm({...form, sheet_category: e.target.value})} 
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                                    >
-                                        <option value="daily trans  2026">2026 Daily Trans</option>
-                                        <option value="daily trans  BUCAS CENTER">BUCAS Center</option>
-                                        <option value="daily transac  CT SCAN">CT Scan</option>
-                                        <option value="daily transaction  DIALYSIS">Dialysis</option>
-                                        <option value="PN GAURANTOR RMPH EMPLOYEE">RMPH Guarantor</option>
-                                        <option value="daily trans  2025">2025 Daily Trans</option>
-                                        <option value="daily trans  2024">2024 Daily Trans</option>
-                                    </select>
+                                <div className="pt-1 border-t border-slate-100">
+                                    <span className="block text-[11px] font-bold text-slate-500 uppercase mb-2">Account Flags</span>
+                                    <div className="flex flex-wrap gap-4">
+                                        <label className="flex items-center space-x-1.5 cursor-pointer">
+                                            <input type="checkbox" checked={form.is_pn} onChange={e => setForm({...form, is_pn: e.target.checked})} className="rounded text-teal-600 focus:ring-teal-500" />
+                                            <span>Promissory Note (PN)</span>
+                                        </label>
+                                        <label className="flex items-center space-x-1.5 cursor-pointer">
+                                            <input type="checkbox" checked={form.is_absconded} onChange={e => setForm({...form, is_absconded: e.target.checked})} className="rounded text-rose-600 focus:ring-rose-500" />
+                                            <span className="text-rose-700">Absconded</span>
+                                        </label>
+                                        <label className="flex items-center space-x-1.5 cursor-pointer">
+                                            <input type="checkbox" checked={form.is_nbb} onChange={e => setForm({...form, is_nbb: e.target.checked})} className="rounded text-teal-600 focus:ring-teal-500" />
+                                            <span>NBB</span>
+                                        </label>
+                                        <label className="flex items-center space-x-1.5 cursor-pointer">
+                                            <input type="checkbox" checked={form.is_non_nbb} onChange={e => setForm({...form, is_non_nbb: e.target.checked})} className="rounded text-purple-600 focus:ring-purple-500" />
+                                            <span>Non-NBB</span>
+                                        </label>
+                                        <label className="flex items-center space-x-1.5 cursor-pointer">
+                                            <input type="checkbox" checked={form.is_vawc_er} onChange={e => setForm({...form, is_vawc_er: e.target.checked})} className="rounded text-indigo-600 focus:ring-indigo-500" />
+                                            <span>VAWC/ER</span>
+                                        </label>
+                                    </div>
                                 </div>
-                                <div>
-                                    <label className="block text-slate-600 uppercase mb-1">Age</label>
-                                    <input 
-                                        type="text" 
-                                        value={form.age} 
-                                        onChange={e => setForm({...form, age: e.target.value})} 
-                                        placeholder="e.g. 45 or NB" 
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-slate-600 uppercase mb-1">Sex</label>
-                                    <select 
-                                        value={form.sex} 
-                                        onChange={e => setForm({...form, sex: e.target.value})} 
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                                    >
-                                        <option value="M">Male (M)</option>
-                                        <option value="F">Female (F)</option>
-                                    </select>
-                                </div>
-                            </div>
+                            </fieldset>
 
-                            {/* Address */}
-                            <div>
-                                <label className="block text-slate-600 uppercase mb-1">Address</label>
-                                <input 
-                                    type="text" 
-                                    value={form.address} 
-                                    onChange={e => setForm({...form, address: e.target.value})} 
-                                    placeholder="e.g. Poblacion, Roxas City, Capiz" 
-                                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                                />
-                            </div>
-
-                            {/* Financial Amounts */}
-                            <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-3">
-                                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Financial Amounts</span>
+                            {/* Section 2: Bill & Promissory Amounts */}
+                            <fieldset className="border border-slate-200 rounded-xl p-4 space-y-3 bg-slate-50">
+                                <legend className="px-2 text-[11px] font-black uppercase tracking-wider text-slate-700 bg-white rounded">
+                                    2. Bill &amp; Promissory Amounts
+                                </legend>
                                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                     <div>
                                         <label className="block text-slate-600 uppercase mb-1">Hospital Bill Total</label>
-                                        <input 
-                                            type="number" 
-                                            step="0.01" 
-                                            value={form.hospital_bill_balance} 
-                                            onChange={e => handleBillOrPnChange('hospital_bill_balance', e.target.value)} 
-                                            placeholder="0.00" 
-                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono"
+                                        <input
+                                            type="number"
+                                            step="0.01"
+                                            value={form.hospital_bill_balance}
+                                            onChange={e => handleBillOrPnChange('hospital_bill_balance', e.target.value)}
+                                            placeholder="0.00"
+                                            className="w-full px-3 py-2 border border-slate-300 bg-white rounded-lg text-xs font-mono"
                                         />
                                     </div>
                                     <div>
                                         <label className="block text-slate-600 uppercase mb-1">PN Amount</label>
-                                        <input 
-                                            type="number" 
-                                            step="0.01" 
-                                            value={form.pn_amount} 
-                                            onChange={e => handleBillOrPnChange('pn_amount', e.target.value)} 
-                                            placeholder="0.00" 
-                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono"
+                                        <input
+                                            type="number"
+                                            step="0.01"
+                                            value={form.pn_amount}
+                                            onChange={e => handleBillOrPnChange('pn_amount', e.target.value)}
+                                            placeholder="0.00"
+                                            className="w-full px-3 py-2 border border-slate-300 bg-white rounded-lg text-xs font-mono"
                                         />
                                     </div>
                                     <div>
                                         <label className="block text-rose-700 uppercase mb-1 font-bold">Remaining Balance</label>
-                                        <input 
-                                            type="number" 
-                                            step="0.01" 
-                                            value={form.remaining_balance} 
-                                            onChange={e => setForm({...form, remaining_balance: e.target.value})} 
-                                            placeholder="0.00" 
-                                            className="w-full px-3 py-2 border border-rose-300 bg-rose-50/50 rounded-lg text-xs font-mono font-bold text-rose-900"
+                                        <input
+                                            type="number"
+                                            step="0.01"
+                                            value={form.remaining_balance}
+                                            onChange={e => setForm({...form, remaining_balance: e.target.value})}
+                                            placeholder="0.00"
+                                            className="w-full px-3 py-2 border border-rose-300 bg-rose-50/70 rounded-lg text-xs font-mono font-bold text-rose-900"
                                         />
                                     </div>
                                 </div>
-                            </div>
+                            </fieldset>
 
-                            {/* Flags (Checkboxes) */}
-                            <div className="flex flex-wrap gap-4 pt-1 pb-1">
-                                <label className="flex items-center space-x-1.5 cursor-pointer">
-                                    <input type="checkbox" checked={form.is_pn} onChange={e => setForm({...form, is_pn: e.target.checked})} className="rounded text-teal-600 focus:ring-teal-500" />
-                                    <span>Promissory Note (PN)</span>
-                                </label>
-                                <label className="flex items-center space-x-1.5 cursor-pointer">
-                                    <input type="checkbox" checked={form.is_absconded} onChange={e => setForm({...form, is_absconded: e.target.checked})} className="rounded text-rose-600 focus:ring-rose-500" />
-                                    <span className="text-rose-700">Absconded</span>
-                                </label>
-                                <label className="flex items-center space-x-1.5 cursor-pointer">
-                                    <input type="checkbox" checked={form.is_nbb} onChange={e => setForm({...form, is_nbb: e.target.checked})} className="rounded text-teal-600 focus:ring-teal-500" />
-                                    <span>NBB</span>
-                                </label>
-                                <label className="flex items-center space-x-1.5 cursor-pointer">
-                                    <input type="checkbox" checked={form.is_non_nbb} onChange={e => setForm({...form, is_non_nbb: e.target.checked})} className="rounded text-purple-600 focus:ring-purple-500" />
-                                    <span>Non-NBB</span>
-                                </label>
-                                <label className="flex items-center space-x-1.5 cursor-pointer">
-                                    <input type="checkbox" checked={form.is_vawc_er} onChange={e => setForm({...form, is_vawc_er: e.target.checked})} className="rounded text-indigo-600 focus:ring-indigo-500" />
-                                    <span>VAWC/ER</span>
-                                </label>
-                            </div>
+                            {/* Section 3: Financial Assistance & Cash Payments */}
+                            <fieldset className="border border-teal-200/80 rounded-xl p-4 space-y-3.5 bg-teal-50/40">
+                                <legend className="px-2 text-[11px] font-black uppercase tracking-wider text-teal-800 bg-white rounded">
+                                    3. Financial Assistance &amp; Payments
+                                </legend>
 
-                            {/* Financial Assistance (F/A) & Grantors (Multiple Grantors supported) */}
-                            <div className="bg-teal-50/50 p-3.5 rounded-xl border border-teal-200/80 space-y-3">
-                                <div className="flex justify-between items-center">
-                                    <div>
-                                        <span className="text-[11px] font-black uppercase text-teal-800 tracking-wider">
-                                            Financial Assistance (F/A) Grantors
-                                        </span>
-                                        <p className="text-[10px] text-teal-600 font-medium">Add one or multiple grantors (e.g. SEN. BONG GO, CONG. GUINTO, MAIP)</p>
-                                    </div>
+                                <div className="flex flex-wrap justify-between items-center gap-2">
+                                    <p className="text-[11px] text-teal-700 font-medium">Add one or multiple F/A grantors (e.g. SEN. BONG GO, CONG. GUINTO, MAIP)</p>
                                     <div className="flex items-center space-x-2">
                                         {form.fa_amount > 0 && (
                                             <span className="px-2.5 py-1 bg-teal-100 text-teal-800 rounded-lg text-xs font-black border border-teal-300">
@@ -1027,68 +1047,72 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
                                     </div>
                                 </div>
 
-                                {/* Dynamic Grantor Rows (Standard SAA Dropdown + Custom) */}
                                 <div className="space-y-2">
-                                    {(form.fa_grantors && form.fa_grantors.length > 0 ? form.fa_grantors : [{ grantor: '', amount: '', isCustom: false }]).map((g, idx) => 
+                                    {(form.fa_grantors && form.fa_grantors.length > 0 ? form.fa_grantors : [{ grantor: '', amount: '', isCustom: false }]).map((g, idx) =>
                                         renderGrantorRow(g, idx)
                                     )}
                                 </div>
 
-                                <div className="w-full sm:w-1/2 pt-1">
-                                    <label className="block text-slate-600 uppercase mb-1 text-[10px] font-bold">F/A Grant Date</label>
-                                    <input 
-                                        type="date" 
-                                        value={form.fa_date} 
-                                        onChange={e => setForm({...form, fa_date: e.target.value})} 
-                                        className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white"
-                                    />
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-teal-200/60">
+                                    <div>
+                                        <label className="block text-slate-600 uppercase mb-1">F/A Grant Date</label>
+                                        <input
+                                            type="date"
+                                            value={form.fa_date}
+                                            onChange={e => setForm({...form, fa_date: e.target.value})}
+                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-slate-600 uppercase mb-1">Cash Payment</label>
+                                        <input
+                                            type="number"
+                                            step="0.01"
+                                            value={form.cash_paid}
+                                            onChange={e => handleFinancialChange('cash_paid', e.target.value)}
+                                            placeholder="0.00"
+                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono bg-white"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-slate-600 uppercase mb-1">OR #</label>
+                                        <input
+                                            type="text"
+                                            value={form.or_number}
+                                            onChange={e => setForm({...form, or_number: e.target.value})}
+                                            placeholder="Receipt #"
+                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono bg-white"
+                                        />
+                                    </div>
                                 </div>
-                            </div>
+                            </fieldset>
 
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                                <div>
-                                    <label className="block text-slate-600 uppercase mb-1">Cash Payment</label>
-                                    <input 
-                                        type="number" 
-                                        step="0.01" 
-                                        value={form.cash_paid} 
-                                        onChange={e => handleFinancialChange('cash_paid', e.target.value)} 
-                                        placeholder="0.00" 
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-slate-600 uppercase mb-1">OR #</label>
-                                    <input 
-                                        type="text" 
-                                        value={form.or_number} 
-                                        onChange={e => setForm({...form, or_number: e.target.value})} 
-                                        placeholder="Receipt #" 
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono"
-                                    />
-                                </div>
+                            {/* Section 4: Guarantor & Remarks */}
+                            <fieldset className="border border-slate-200 rounded-xl p-4 space-y-3 bg-white">
+                                <legend className="px-2 text-[11px] font-black uppercase tracking-wider text-slate-700">
+                                    4. Guarantor &amp; Remarks
+                                </legend>
                                 <div>
                                     <label className="block text-slate-600 uppercase mb-1">Guarantor Name</label>
-                                    <input 
-                                        type="text" 
-                                        value={form.guarantor_name} 
-                                        onChange={e => setForm({...form, guarantor_name: e.target.value})} 
-                                        placeholder="RMPH Employee / Co-maker" 
+                                    <input
+                                        type="text"
+                                        value={form.guarantor_name}
+                                        onChange={e => setForm({...form, guarantor_name: e.target.value})}
+                                        placeholder="RMPH Employee / Co-maker"
                                         className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
                                     />
                                 </div>
-                            </div>
-
-                            <div>
-                                <label className="block text-slate-600 uppercase mb-1">Remarks</label>
-                                <textarea 
-                                    rows="2"
-                                    value={form.remarks} 
-                                    onChange={e => setForm({...form, remarks: e.target.value})} 
-                                    placeholder="Enter promissory note conditions, blood donors, promissory due date, etc."
-                                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                                ></textarea>
-                            </div>
+                                <div>
+                                    <label className="block text-slate-600 uppercase mb-1">Remarks</label>
+                                    <textarea
+                                        rows="2"
+                                        value={form.remarks}
+                                        onChange={e => setForm({...form, remarks: e.target.value})}
+                                        placeholder="Enter promissory note conditions, blood donors, promissory due date, etc."
+                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                                    ></textarea>
+                                </div>
+                            </fieldset>
 
                             <div className="pt-3 border-t border-slate-200 flex justify-end space-x-2">
                                 <button
@@ -1107,14 +1131,19 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
                                 </button>
                             </div>
                         </form>
-                    </div>
-                </div>
-            )}
+            </Modal>
 
             {/* --- EDIT / SETTLE PROMISSORY NOTE MODAL --- */}
-            {isEditModalOpen && editingNote && (
-                <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 overflow-y-auto">
-                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden border border-slate-200 animate-in zoom-in duration-200 my-8">
+            <Modal
+                show={Boolean(isEditModalOpen && editingNote)}
+                onClose={() => { if (!submitting) { setIsEditModalOpen(false); setEditingNote(null); } }}
+                closeable={!submitting}
+                maxWidth="2xl"
+                zIndexClass="z-[300]"
+                panelClassName="border border-slate-200"
+            >
+                {editingNote && (
+                    <>
                         <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
                             <div>
                                 <h3 className="text-base font-black text-slate-800 uppercase tracking-wide">
@@ -1122,16 +1151,15 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
                                 </h3>
                                 <p className="text-xs text-slate-500 font-medium">Record ID #{editingNote.id} • {editingNote.patient_name}</p>
                             </div>
-                            <button onClick={() => { setIsEditModalOpen(false); setEditingNote(null); }} className="text-slate-400 hover:text-slate-600 p-1">
+                            <button type="button" aria-label="Close modal" onClick={() => { setIsEditModalOpen(false); setEditingNote(null); }} disabled={submitting} className="text-slate-400 hover:text-slate-600 p-1 disabled:opacity-50">
                                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                             </button>
                         </div>
 
-                        <form onSubmit={handleUpdate} className="p-6 space-y-4 max-h-[75vh] overflow-y-auto text-xs font-semibold">
-                            
-                            <div className="bg-amber-50 p-3 rounded-lg border border-amber-200 flex justify-between items-center">
+                        <form onSubmit={handleUpdate} className="p-6 space-y-5 max-h-[75vh] overflow-y-auto text-xs font-semibold">
+                            <div className="bg-amber-50 p-3.5 rounded-xl border border-amber-200 flex flex-wrap justify-between items-center gap-3">
                                 <div>
-                                    <span className="text-[10px] font-black uppercase text-amber-600 tracking-wider">Current Remaining Balance</span>
+                                    <span className="text-[11px] font-black uppercase text-amber-700 tracking-wider">Current Remaining Balance</span>
                                     <div className="text-lg font-black text-amber-900">{formatCurrency(form.remaining_balance)}</div>
                                 </div>
                                 <button
@@ -1144,107 +1172,110 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
                                 </button>
                             </div>
 
-                            {/* Patient & Date */}
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                                <div className="sm:col-span-2">
-                                    <label className="block text-slate-600 uppercase mb-1">Patient Name *</label>
-                                    <input 
-                                        type="text" 
-                                        required 
-                                        value={form.patient_name} 
-                                        onChange={e => setForm({...form, patient_name: e.target.value})} 
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs uppercase"
-                                    />
+                            {/* Section 1: Patient & Classification */}
+                            <fieldset className="border border-slate-200 rounded-xl p-4 space-y-3 bg-white">
+                                <legend className="px-2 text-[11px] font-black uppercase tracking-wider text-slate-700">
+                                    1. Patient &amp; Classification
+                                </legend>
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                    <div className="sm:col-span-2">
+                                        <label className="block text-slate-600 uppercase mb-1">Patient Name *</label>
+                                        <input
+                                            type="text"
+                                            required
+                                            value={form.patient_name}
+                                            onChange={e => setForm({...form, patient_name: e.target.value})}
+                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs uppercase"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-slate-600 uppercase mb-1">Entry Date</label>
+                                        <input
+                                            type="date"
+                                            value={form.entry_date}
+                                            onChange={e => setForm({...form, entry_date: e.target.value})}
+                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                                        />
+                                    </div>
                                 </div>
-                                <div>
-                                    <label className="block text-slate-600 uppercase mb-1">Date</label>
-                                    <input 
-                                        type="date" 
-                                        value={form.entry_date} 
-                                        onChange={e => setForm({...form, entry_date: e.target.value})} 
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                                    />
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-slate-600 uppercase mb-1">Sheet / Category</label>
+                                        <select
+                                            value={form.sheet_category}
+                                            onChange={e => setForm({...form, sheet_category: e.target.value})}
+                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                                        >
+                                            <option value="daily trans  2026">2026 Daily Trans</option>
+                                            <option value="daily trans  BUCAS CENTER">BUCAS Center</option>
+                                            <option value="daily transac  CT SCAN">CT Scan</option>
+                                            <option value="daily transaction  DIALYSIS">Dialysis</option>
+                                            <option value="PN GAURANTOR RMPH EMPLOYEE">RMPH Guarantor</option>
+                                            <option value="daily trans  2025">2025 Daily Trans</option>
+                                            <option value="daily trans  2024">2024 Daily Trans</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-slate-600 uppercase mb-1">Address</label>
+                                        <input
+                                            type="text"
+                                            value={form.address}
+                                            onChange={e => setForm({...form, address: e.target.value})}
+                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                                        />
+                                    </div>
                                 </div>
-                            </div>
+                            </fieldset>
 
-                            {/* Section Category */}
-                            <div>
-                                <label className="block text-slate-600 uppercase mb-1">Sheet / Category</label>
-                                <select 
-                                    value={form.sheet_category} 
-                                    onChange={e => setForm({...form, sheet_category: e.target.value})} 
-                                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                                >
-                                    <option value="daily trans  2026">2026 Daily Trans</option>
-                                    <option value="daily trans  BUCAS CENTER">BUCAS Center</option>
-                                    <option value="daily transac  CT SCAN">CT Scan</option>
-                                    <option value="daily transaction  DIALYSIS">Dialysis</option>
-                                    <option value="PN GAURANTOR RMPH EMPLOYEE">RMPH Guarantor</option>
-                                    <option value="daily trans  2025">2025 Daily Trans</option>
-                                    <option value="daily trans  2024">2024 Daily Trans</option>
-                                </select>
-                            </div>
-
-                            {/* Financial Amounts */}
-                            <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-3">
-                                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Financial Amounts</span>
+                            {/* Section 2: Bill & Promissory Amounts */}
+                            <fieldset className="border border-slate-200 rounded-xl p-4 space-y-3 bg-slate-50">
+                                <legend className="px-2 text-[11px] font-black uppercase tracking-wider text-slate-700 bg-white rounded">
+                                    2. Bill &amp; Promissory Amounts
+                                </legend>
                                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                     <div>
                                         <label className="block text-slate-600 uppercase mb-1">Hospital Bill Total</label>
-                                        <input 
-                                            type="number" 
-                                            step="0.01" 
-                                            value={form.hospital_bill_balance} 
-                                            onChange={e => handleFinancialChange('hospital_bill_balance', e.target.value)} 
-                                            placeholder="0.00" 
-                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono"
+                                        <input
+                                            type="number"
+                                            step="0.01"
+                                            value={form.hospital_bill_balance}
+                                            onChange={e => handleFinancialChange('hospital_bill_balance', e.target.value)}
+                                            placeholder="0.00"
+                                            className="w-full px-3 py-2 border border-slate-300 bg-white rounded-lg text-xs font-mono"
                                         />
                                     </div>
                                     <div>
                                         <label className="block text-slate-600 uppercase mb-1">PN Amount</label>
-                                        <input 
-                                            type="number" 
-                                            step="0.01" 
-                                            value={form.pn_amount} 
-                                            onChange={e => handleFinancialChange('pn_amount', e.target.value)} 
-                                            placeholder="0.00" 
-                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono"
+                                        <input
+                                            type="number"
+                                            step="0.01"
+                                            value={form.pn_amount}
+                                            onChange={e => handleFinancialChange('pn_amount', e.target.value)}
+                                            placeholder="0.00"
+                                            className="w-full px-3 py-2 border border-slate-300 bg-white rounded-lg text-xs font-mono"
                                         />
                                     </div>
                                     <div>
                                         <label className="block text-rose-700 uppercase mb-1 font-bold">Remaining Balance</label>
-                                        <input 
-                                            type="number" 
-                                            step="0.01" 
-                                            value={form.remaining_balance} 
-                                            onChange={e => setForm({...form, remaining_balance: e.target.value})} 
-                                            placeholder="0.00" 
-                                            className="w-full px-3 py-2 border border-rose-300 bg-rose-50/50 rounded-lg text-xs font-mono font-bold text-rose-900"
+                                        <input
+                                            type="number"
+                                            step="0.01"
+                                            value={form.remaining_balance}
+                                            onChange={e => setForm({...form, remaining_balance: e.target.value})}
+                                            placeholder="0.00"
+                                            className="w-full px-3 py-2 border border-rose-300 bg-rose-50/70 rounded-lg text-xs font-mono font-bold text-rose-900"
                                         />
                                     </div>
                                 </div>
-                            </div>
+                            </fieldset>
 
-                            {/* Address */}
-                            <div>
-                                <label className="block text-slate-600 uppercase mb-1">Address</label>
-                                <input 
-                                    type="text" 
-                                    value={form.address} 
-                                    onChange={e => setForm({...form, address: e.target.value})} 
-                                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                                />
-                            </div>
-
-                            {/* Financial Assistance (F/A) & Grantors (Multiple Grantors supported) */}
-                            <div className="bg-teal-50/50 p-3.5 rounded-xl border border-teal-200/80 space-y-3">
-                                <div className="flex justify-between items-center">
-                                    <div>
-                                        <span className="text-[11px] font-black uppercase text-teal-800 tracking-wider">
-                                            Financial Assistance (F/A) Grantors
-                                        </span>
-                                        <p className="text-[10px] text-teal-600 font-medium">Add one or multiple grantors (e.g. SEN. BONG GO, CONG. GUINTO, MAIP)</p>
-                                    </div>
+                            {/* Section 3: Financial Assistance & Cash Payments */}
+                            <fieldset className="border border-teal-200/80 rounded-xl p-4 space-y-3.5 bg-teal-50/40">
+                                <legend className="px-2 text-[11px] font-black uppercase tracking-wider text-teal-800 bg-white rounded">
+                                    3. Financial Assistance &amp; Payments
+                                </legend>
+                                <div className="flex flex-wrap justify-between items-center gap-2">
+                                    <p className="text-[11px] text-teal-700 font-medium">Add one or multiple F/A grantors (e.g. SEN. BONG GO, CONG. GUINTO, MAIP)</p>
                                     <div className="flex items-center space-x-2">
                                         {form.fa_amount > 0 && (
                                             <span className="px-2.5 py-1 bg-teal-100 text-teal-800 rounded-lg text-xs font-black border border-teal-300">
@@ -1262,91 +1293,93 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
                                     </div>
                                 </div>
 
-                                {/* Dynamic Grantor Rows (Standard SAA Dropdown + Custom) */}
                                 <div className="space-y-2">
-                                    {(form.fa_grantors && form.fa_grantors.length > 0 ? form.fa_grantors : [{ grantor: '', amount: '', isCustom: false }]).map((g, idx) => 
+                                    {(form.fa_grantors && form.fa_grantors.length > 0 ? form.fa_grantors : [{ grantor: '', amount: '', isCustom: false }]).map((g, idx) =>
                                         renderGrantorRow(g, idx)
                                     )}
                                 </div>
 
-                                <div className="w-full sm:w-1/2 pt-1">
-                                    <label className="block text-slate-600 uppercase mb-1 text-[10px] font-bold">F/A Grant Date</label>
-                                    <input 
-                                        type="date" 
-                                        value={form.fa_date} 
-                                        onChange={e => setForm({...form, fa_date: e.target.value})} 
-                                        className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white"
-                                    />
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2 border-t border-teal-200/60">
+                                    <div>
+                                        <label className="block text-slate-600 uppercase mb-1">F/A Grant Date</label>
+                                        <input
+                                            type="date"
+                                            value={form.fa_date}
+                                            onChange={e => setForm({...form, fa_date: e.target.value})}
+                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-slate-600 uppercase mb-1">Cash Paid (₱)</label>
+                                        <input
+                                            type="number"
+                                            step="0.01"
+                                            value={form.cash_paid}
+                                            onChange={e => handleFinancialChange('cash_paid', e.target.value)}
+                                            placeholder="0.00"
+                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono bg-white"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-slate-600 uppercase mb-1">Official Receipt (OR #)</label>
+                                        <input
+                                            type="text"
+                                            value={form.or_number}
+                                            onChange={e => setForm({...form, or_number: e.target.value})}
+                                            placeholder="OR #"
+                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono bg-white"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-slate-600 uppercase mb-1">OR Date</label>
+                                        <input
+                                            type="date"
+                                            value={form.or_date}
+                                            onChange={e => setForm({...form, or_date: e.target.value})}
+                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white"
+                                        />
+                                    </div>
                                 </div>
-                            </div>
+                            </fieldset>
 
-                            {/* Payments / Assistance updates */}
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 p-3 rounded-lg border border-slate-200">
-                                <div>
-                                    <label className="block text-slate-600 uppercase mb-1">Cash Paid (₱)</label>
-                                    <input 
-                                        type="number" 
-                                        step="0.01" 
-                                        value={form.cash_paid} 
-                                        onChange={e => handleFinancialChange('cash_paid', e.target.value)} 
-                                        placeholder="0.00" 
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono"
-                                    />
+                            {/* Section 4: Guarantor, Status & Remarks */}
+                            <fieldset className="border border-slate-200 rounded-xl p-4 space-y-3 bg-white">
+                                <legend className="px-2 text-[11px] font-black uppercase tracking-wider text-slate-700">
+                                    4. Guarantor, Status &amp; Remarks
+                                </legend>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-slate-600 uppercase mb-1">Guarantor Name</label>
+                                        <input
+                                            type="text"
+                                            value={form.guarantor_name}
+                                            onChange={e => setForm({...form, guarantor_name: e.target.value})}
+                                            placeholder="e.g. Employee Name"
+                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-slate-600 uppercase mb-1">Status</label>
+                                        <select
+                                            value={form.remaining_balance <= 0 ? 'Settled' : 'Active'}
+                                            onChange={e => setForm({...form, status: e.target.value})}
+                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                                        >
+                                            <option value="Active">Active (Unsettled)</option>
+                                            <option value="Settled">Settled</option>
+                                        </select>
+                                    </div>
                                 </div>
                                 <div>
-                                    <label className="block text-slate-600 uppercase mb-1">Official Receipt (OR #)</label>
-                                    <input 
-                                        type="text" 
-                                        value={form.or_number} 
-                                        onChange={e => setForm({...form, or_number: e.target.value})} 
-                                        placeholder="OR #" 
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-slate-600 uppercase mb-1">OR Date</label>
-                                    <input 
-                                        type="date" 
-                                        value={form.or_date} 
-                                        onChange={e => setForm({...form, or_date: e.target.value})} 
+                                    <label className="block text-slate-600 uppercase mb-1">Remarks</label>
+                                    <textarea
+                                        rows="2"
+                                        value={form.remarks}
+                                        onChange={e => setForm({...form, remarks: e.target.value})}
                                         className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                                    />
+                                    ></textarea>
                                 </div>
-                            </div>
-
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                <div>
-                                    <label className="block text-slate-600 uppercase mb-1">Guarantor Name</label>
-                                    <input 
-                                        type="text" 
-                                        value={form.guarantor_name} 
-                                        onChange={e => setForm({...form, guarantor_name: e.target.value})} 
-                                        placeholder="e.g. Employee Name" 
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-slate-600 uppercase mb-1">Status</label>
-                                    <select
-                                        value={form.remaining_balance <= 0 ? 'Settled' : 'Active'}
-                                        onChange={e => setForm({...form, status: e.target.value})}
-                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                                    >
-                                        <option value="Active">Active (Unsettled)</option>
-                                        <option value="Settled">Settled</option>
-                                    </select>
-                                </div>
-                            </div>
-
-                            <div>
-                                <label className="block text-slate-600 uppercase mb-1">Remarks</label>
-                                <textarea 
-                                    rows="2"
-                                    value={form.remarks} 
-                                    onChange={e => setForm({...form, remarks: e.target.value})} 
-                                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                                ></textarea>
-                            </div>
+                            </fieldset>
 
                             <div className="pt-3 border-t border-slate-200 flex justify-end space-x-2">
                                 <button
@@ -1365,9 +1398,20 @@ export default function PromissoryMasterlist({ onSelectPatient = null, initialPa
                                 </button>
                             </div>
                         </form>
-                    </div>
-                </div>
-            )}
+                    </>
+                )}
+            </Modal>
+
+            <ConfirmDialog
+                show={isSettleConfirmOpen && Boolean(editingNote)}
+                onClose={() => setIsSettleConfirmOpen(false)}
+                onConfirm={executeMarkSettled}
+                title="Mark Promissory Note as Settled"
+                message={editingNote ? `Mark promissory note for ${editingNote.patient_name} as FULLY SETTLED?\n\nThis will set the remaining balance to ₱0.00.` : ''}
+                confirmLabel="Mark as Settled"
+                tone="teal"
+                loading={submitting}
+            />
         </div>
     );
 }

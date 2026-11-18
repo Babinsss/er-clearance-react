@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Head, router } from '@inertiajs/react';
 import PortalLayout from '@/Layouts/PortalLayout';
+import Modal from '@/Components/Modal';
 
 export default function Billing({ 
     clearedPatients = [], 
@@ -27,14 +28,26 @@ export default function Billing({
     const [selectedStatusFilter, setSelectedStatusFilter] = useState('all'); // 'all' | 'waiting_selected' | 'almost_done'
     const [routingSubView, setRoutingSubView] = useState('queue'); // 'queue' | 'analytics'
 
-    // Modals
+    // Modals & Row Expansion
     const [inspectPatient, setInspectPatient] = useState(null);
     const [inspectCostCenter, setInspectCostCenter] = useState(null);
+    const [expandedPatients, setExpandedPatients] = useState({});
+
+    const toggleExpandPatient = (patientId) => {
+        setExpandedPatients((prev) => ({
+            ...prev,
+            [patientId]: !prev[patientId],
+        }));
+    };
 
     // Archives Pagination & Print State
     const [jumpPageInput, setJumpPageInput] = useState('');
     const [isSearchingArchive, setIsSearchingArchive] = useState(false);
     const [printingEncounter, setPrintingEncounter] = useState(null);
+    const [printSequence, setPrintSequence] = useState(0);
+    const [awaitingArchiveConfirm, setAwaitingArchiveConfirm] = useState(null);
+    const [archivingEncounter, setArchivingEncounter] = useState(null);
+    const [archiveError, setArchiveError] = useState(null);
     const [soundEnabled, setSoundEnabled] = useState(true);
     
     const previousClearedCount = useRef(clearedPatients.length);
@@ -190,23 +203,37 @@ export default function Billing({
         }
     };
 
-    const handlePrintAndArchive = (enccode) => {
+    const handleOpenPrint = (enccode) => {
+        setArchiveError(null);
         setPrintingEncounter(enccode);
-        
-        setTimeout(() => {
-            router.post('/clearance/archive', { enccode: enccode }, {
-                preserveScroll: true,
-                preserveState: true,
-                onSuccess: () => {
-                    setPrintingEncounter(null);
-                }
-            });
-        }, 2000);
+        setPrintSequence((n) => n + 1);
+        if (activeTab === 'ready') {
+            setAwaitingArchiveConfirm(enccode);
+        }
     };
 
-    const handleReprint = (enccode) => {
-        setPrintingEncounter(enccode);
-        setTimeout(() => setPrintingEncounter(null), 3000);
+    const handleConfirmArchive = (enccode) => {
+        setArchiveError(null);
+        setArchivingEncounter(enccode);
+        router.post('/clearance/archive', { enccode }, {
+            preserveScroll: true,
+            preserveState: true,
+            onSuccess: () => {
+                setArchivingEncounter(null);
+                setAwaitingArchiveConfirm(null);
+                setPrintingEncounter(null);
+            },
+            onError: () => {
+                setArchivingEncounter(null);
+                setArchiveError('Failed to archive clearance. Please check your connection and try again.');
+            }
+        });
+    };
+
+    const handleCancelPrintArchive = () => {
+        setAwaitingArchiveConfirm(null);
+        setPrintingEncounter(null);
+        setArchiveError(null);
     };
 
     // Helper to calculate page number items with ellipses
@@ -242,13 +269,15 @@ export default function Billing({
                 <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 flex flex-col shrink-0 w-full lg:w-[270px]">
                     <div className="mb-6 px-2 pt-1 flex justify-between items-start border-b border-slate-100 pb-4">
                         <div>
-                            <h2 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Finalization Portal</h2>
+                            <h2 className="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Finalization Portal</h2>
                             <div className="text-xl font-extrabold text-slate-800 leading-tight">Billing &<br/>Claims</div>
                         </div>
                         <button 
+                            type="button"
                             onClick={() => setSoundEnabled(!soundEnabled)} 
                             className="text-slate-400 hover:text-teal-600 transition-colors p-1.5 bg-slate-50 rounded-lg border border-slate-200 shadow-sm" 
                             title={soundEnabled ? "Mute Clearance Alerts" : "Enable Clearance Alerts"}
+                            aria-label={soundEnabled ? "Mute clearance alerts" : "Enable clearance alerts"}
                         >
                             {soundEnabled ? (
                                 <svg className="w-4 h-4 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5 10c0-1.1.9-2 2-2h2l4-4v16l-4-4H7a2 2 0 01-2-2v-4z"></path></svg>
@@ -275,17 +304,11 @@ export default function Billing({
                                 </span>
                                 <div className="text-left">
                                     <span className="block font-bold">Routing Monitor</span>
-                                    <span className="text-[10px] text-slate-400 font-normal">Active routing & speed</span>
+                                    <span className="text-[11px] text-slate-400 font-normal">Active routing & speed</span>
                                 </div>
                             </div>
                             <div className="flex items-center space-x-1">
-                                {routedPatients.length > 0 && (
-                                    <span className="relative flex h-2 w-2 mr-0.5">
-                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                                        <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
-                                    </span>
-                                )}
-                                <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-bold shadow-sm ${
+                                <span className={`text-[11px] px-2 py-0.5 rounded-full font-mono font-bold shadow-sm ${
                                     routedPatients.length > 0 ? 'bg-amber-500 text-white' : 'bg-slate-200 text-slate-600'
                                 }`}>
                                     {routedPatients.length}
@@ -308,11 +331,11 @@ export default function Billing({
                                 </span>
                                 <div className="text-left">
                                     <span className="block font-bold">Ready for Print</span>
-                                    <span className="text-[10px] text-slate-400 font-normal">Fully cleared queue</span>
+                                    <span className="text-[11px] text-slate-400 font-normal">Fully cleared queue</span>
                                 </div>
                             </div>
                             {clearedPatients.length > 0 && (
-                                <span className="bg-teal-600 text-white text-[10px] px-2 py-0.5 rounded-full shadow-sm font-mono font-bold">
+                                <span className="bg-teal-600 text-white text-[11px] px-2 py-0.5 rounded-full shadow-sm font-mono font-bold">
                                     {clearedPatients.length}
                                 </span>
                             )}
@@ -333,11 +356,11 @@ export default function Billing({
                                 </span>
                                 <div className="text-left">
                                     <span className="block font-bold">Printed Archives</span>
-                                    <span className="text-[10px] text-slate-400 font-normal">Finalized masterlist</span>
+                                    <span className="text-[11px] text-slate-400 font-normal">Finalized masterlist</span>
                                 </div>
                             </div>
                             {totalArchivedCount > 0 && (
-                                <span className="bg-slate-500 text-white text-[10px] px-2 py-0.5 rounded-full shadow-sm font-mono font-bold">
+                                <span className="bg-slate-500 text-white text-[11px] px-2 py-0.5 rounded-full shadow-sm font-mono font-bold">
                                     {totalArchivedCount.toLocaleString()}
                                 </span>
                             )}
@@ -347,8 +370,8 @@ export default function Billing({
                     {/* Quick Hospital Turnaround Widget in Sidebar */}
                     <div className="mt-8 pt-4 border-t border-slate-100 bg-slate-50/70 p-3.5 rounded-xl border border-slate-200/80">
                         <div className="flex items-center justify-between mb-2">
-                            <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">Hospital Clearance</span>
-                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-black bg-teal-100 text-teal-800">
+                            <span className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider">Hospital Clearance</span>
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-black bg-teal-100 text-teal-800">
                                 30D AVG
                             </span>
                         </div>
@@ -396,10 +419,6 @@ export default function Billing({
                                         <h3 className="text-lg font-extrabold text-slate-800 tracking-tight">
                                             Routing Monitor & Cost Center Turnaround
                                         </h3>
-                                        <span className="flex h-2.5 w-2.5 relative" title="Live Sync Active">
-                                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                                            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
-                                        </span>
                                     </div>
                                     <p className="text-xs text-slate-500 font-medium mt-0.5">
                                         Monitor routed patients in real-time and track how long each cost center takes to clear them.
@@ -433,136 +452,49 @@ export default function Billing({
                                 </div>
                             </div>
 
-                            {/* KPI Metrics Cards */}
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5 p-6 pb-2">
-                                <div className="bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200/80 rounded-xl p-4 shadow-xs">
-                                    <div className="flex items-center justify-between text-[11px] font-bold text-amber-800 uppercase tracking-wider mb-1">
-                                        <span>Currently Routing</span>
-                                        <span className="p-1 bg-amber-100 rounded-md">
-                                            <svg className="w-3.5 h-3.5 text-amber-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                            {/* Compact Turnaround Summary Strip */}
+                            <div className="px-6 py-3 border-b border-slate-200 bg-white flex flex-wrap items-center justify-between gap-4">
+                                <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-slate-500 font-semibold">Currently Routing</span>
+                                        <span className="text-base font-black text-amber-700 font-mono">{routedPatients.length}</span>
+                                    </div>
+                                    <span className="hidden sm:inline text-slate-200" aria-hidden="true">|</span>
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-slate-500 font-semibold">30D Hospital Avg</span>
+                                        <span className="text-base font-black text-teal-700 font-mono">{hospitalStats.overall_avg_formatted || '5m'}</span>
+                                    </div>
+                                    <span className="hidden sm:inline text-slate-200" aria-hidden="true">|</span>
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-slate-500 font-semibold">Fastest</span>
+                                        <span className="font-bold text-slate-800">
+                                            {hospitalStats.fastest_dept?.name || 'Pharmacy'}
+                                            <span className="ml-1 font-mono text-emerald-700">({hospitalStats.fastest_dept?.avg_formatted || '3m'})</span>
                                         </span>
                                     </div>
-                                    <div className="text-2xl font-black text-amber-900">{routedPatients.length}</div>
-                                    <div className="text-[10px] text-amber-700/80 font-medium mt-0.5">Patients awaiting clearances</div>
-                                </div>
-
-                                <div className="bg-gradient-to-br from-teal-50 to-emerald-50 border border-teal-200/80 rounded-xl p-4 shadow-xs">
-                                    <div className="flex items-center justify-between text-[11px] font-bold text-teal-800 uppercase tracking-wider mb-1">
-                                        <span>Overall Turnaround</span>
-                                        <span className="p-1 bg-teal-100 rounded-md">
-                                            <svg className="w-3.5 h-3.5 text-teal-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                                    <span className="hidden sm:inline text-slate-200" aria-hidden="true">|</span>
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-slate-500 font-semibold">Highest Latency</span>
+                                        <span className="font-bold text-slate-800">
+                                            {hospitalStats.slowest_dept?.name || 'CSR'}
+                                            <span className="ml-1 font-mono text-rose-700">({hospitalStats.slowest_dept?.avg_formatted || '7m'})</span>
                                         </span>
                                     </div>
-                                    <div className="text-2xl font-black text-teal-900">{hospitalStats.overall_avg_formatted || '5m'}</div>
-                                    <div className="text-[10px] text-teal-700/80 font-medium mt-0.5">Hospital average clearance speed</div>
                                 </div>
 
-                                <div className="bg-gradient-to-br from-sky-50 to-blue-50 border border-sky-200/80 rounded-xl p-4 shadow-xs">
-                                    <div className="flex items-center justify-between text-[11px] font-bold text-sky-800 uppercase tracking-wider mb-1">
-                                        <span>Fastest Cost Center</span>
-                                        <span className="p-1 bg-sky-100 rounded-md">
-                                            <svg className="w-3.5 h-3.5 text-sky-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path></svg>
-                                        </span>
-                                    </div>
-                                    <div className="text-xl font-black text-sky-900 truncate">
-                                        {hospitalStats.fastest_dept?.name || 'Pharmacy'}
-                                    </div>
-                                    <div className="text-[10px] text-sky-700 font-bold mt-0.5">
-                                        {hospitalStats.fastest_dept?.avg_formatted || '3m'} avg turnaround
-                                    </div>
-                                </div>
-
-                                <div className="bg-gradient-to-br from-rose-50 to-red-50 border border-rose-200/80 rounded-xl p-4 shadow-xs">
-                                    <div className="flex items-center justify-between text-[11px] font-bold text-rose-800 uppercase tracking-wider mb-1">
-                                        <span>Highest Latency</span>
-                                        <span className="p-1 bg-rose-100 rounded-md">
-                                            <svg className="w-3.5 h-3.5 text-rose-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
-                                        </span>
-                                    </div>
-                                    <div className="text-xl font-black text-rose-900 truncate">
-                                        {hospitalStats.slowest_dept?.name || 'CSR'}
-                                    </div>
-                                    <div className="text-[10px] text-rose-700 font-bold mt-0.5">
-                                        {hospitalStats.slowest_dept?.avg_formatted || '7m'} avg turnaround
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* COST CENTER QUICK-FILTER CHIPS RIBBON */}
-                            <div className="px-6 py-3 border-b border-slate-200 bg-white">
-                                <div className="flex items-center justify-between mb-2">
-                                    <div className="flex items-center space-x-1.5">
-                                        <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
-                                            Cost Center Clearance Turnaround Times (Click to filter):
-                                        </span>
-                                    </div>
-                                    {selectedCostCenter !== 'all' && (
-                                        <button
-                                            onClick={() => {
-                                                setSelectedCostCenter('all');
-                                                setSelectedStatusFilter('all');
-                                            }}
-                                            className="text-[11px] text-amber-700 hover:text-amber-900 font-bold flex items-center space-x-1"
-                                        >
-                                            <span>Reset Cost Center filter</span>
-                                            <span className="bg-amber-100 px-1 rounded text-[10px]">✕</span>
-                                        </button>
-                                    )}
-                                </div>
-
-                                <div className="flex items-center gap-2 overflow-x-auto pb-1.5 scrollbar-thin">
-                                    {costCenterEntries.map((cc) => {
-                                        const isSelected = selectedCostCenter === cc.name;
-
-                                        return (
-                                            <div
-                                                key={cc.name}
-                                                onClick={() => setSelectedCostCenter(isSelected ? 'all' : cc.name)}
-                                                className={`cursor-pointer px-3 py-2 rounded-xl border text-xs transition-all shrink-0 flex items-center space-x-2.5 ${
-                                                    isSelected
-                                                        ? 'bg-amber-500 text-white border-amber-600 shadow-md ring-2 ring-amber-300'
-                                                        : 'bg-slate-50 hover:bg-white text-slate-700 border-slate-200 hover:border-slate-300 shadow-2xs'
-                                                }`}
-                                            >
-                                                <div className="text-left">
-                                                    <div className="font-extrabold flex items-center space-x-1.5">
-                                                        <span>{cc.name}</span>
-                                                        {cc.pending_count > 0 && (
-                                                            <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
-                                                                isSelected ? 'bg-amber-700 text-white' : 'bg-rose-100 text-rose-700'
-                                                            }`}>
-                                                                {cc.pending_count} waiting
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                    <div className={`text-[10px] font-medium flex items-center space-x-1 mt-0.5 ${
-                                                        isSelected ? 'text-amber-100' : 'text-slate-500'
-                                                    }`}>
-                                                        <span>Avg: <strong className={isSelected ? 'text-white' : 'text-slate-800'}>{cc.avg_formatted || '0m'}</strong></span>
-                                                        <span>•</span>
-                                                        <span>{cc.total_cleared} cleared</span>
-                                                    </div>
-                                                </div>
-                                                
-                                                <button
-                                                    type="button"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        setInspectCostCenter(cc);
-                                                    }}
-                                                    className={`p-1 rounded-md transition-colors ${
-                                                        isSelected 
-                                                            ? 'hover:bg-amber-600 text-white' 
-                                                            : 'hover:bg-slate-200 text-slate-400 hover:text-slate-700'
-                                                    }`}
-                                                    title={`Inspect ${cc.name} turnaround details`}
-                                                >
-                                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                                                </button>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
+                                {selectedCostCenter !== 'all' && (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setSelectedCostCenter('all');
+                                            setSelectedStatusFilter('all');
+                                        }}
+                                        className="text-xs bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 px-2.5 py-1 rounded-lg font-bold inline-flex items-center gap-1.5 transition-colors"
+                                    >
+                                        <span>Cost Center: {selectedCostCenter}</span>
+                                        <span aria-hidden="true">✕</span>
+                                    </button>
+                                )}
                             </div>
 
                             {/* SUB-VIEW 1: ACTIVE PATIENTS QUEUE */}
@@ -576,7 +508,7 @@ export default function Billing({
                                                 <select
                                                     value={selectedWard}
                                                     onChange={(e) => setSelectedWard(e.target.value)}
-                                                    className="w-full sm:w-48 px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:ring-2 focus:ring-amber-500 shadow-2xs"
+                                                    className="w-full sm:w-48 px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:ring-2 focus:ring-amber-500 shadow-sm"
                                                 >
                                                     <option value="all">🏥 All Originating Wards</option>
                                                     {wards.map((w, idx) => (
@@ -590,7 +522,7 @@ export default function Billing({
                                                 <select
                                                     value={selectedCostCenter}
                                                     onChange={(e) => setSelectedCostCenter(e.target.value)}
-                                                    className="w-full sm:w-48 px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:ring-2 focus:ring-amber-500 shadow-2xs"
+                                                    className="w-full sm:w-48 px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:ring-2 focus:ring-amber-500 shadow-sm"
                                                 >
                                                     <option value="all">🏢 All Cost Centers</option>
                                                     {costCentersList.map((cc, idx) => (
@@ -605,7 +537,7 @@ export default function Billing({
                                                     <select
                                                         value={selectedStatusFilter}
                                                         onChange={(e) => setSelectedStatusFilter(e.target.value)}
-                                                        className="w-full sm:w-48 px-3 py-1.5 bg-white border border-amber-300 rounded-lg text-xs font-bold text-amber-800 focus:ring-2 focus:ring-amber-500 shadow-2xs"
+                                                        className="w-full sm:w-48 px-3 py-1.5 bg-white border border-amber-300 rounded-lg text-xs font-bold text-amber-800 focus:ring-2 focus:ring-amber-500 shadow-sm"
                                                     >
                                                         <option value="all">Show All for {selectedCostCenter}</option>
                                                         <option value="waiting_selected">⏳ Only Waiting on {selectedCostCenter}</option>
@@ -618,7 +550,7 @@ export default function Billing({
                                                     <select
                                                         value={selectedStatusFilter}
                                                         onChange={(e) => setSelectedStatusFilter(e.target.value)}
-                                                        className="w-full sm:w-44 px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:ring-2 focus:ring-amber-500 shadow-2xs"
+                                                        className="w-full sm:w-44 px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:ring-2 focus:ring-amber-500 shadow-sm"
                                                     >
                                                         <option value="all">All Routing Statuses</option>
                                                         <option value="almost_done">⚡ Almost Done (1 Left)</option>
@@ -635,10 +567,12 @@ export default function Billing({
                                                 placeholder="Search routed patient, hospital #, enc..." 
                                                 value={routingSearch}
                                                 onChange={(e) => setRoutingSearch(e.target.value)}
-                                                className="w-full pl-9 pr-8 py-1.5 bg-white rounded-lg border-slate-300 shadow-2xs focus:ring-2 focus:ring-amber-500 text-xs transition-all font-medium"
+                                                className="w-full pl-9 pr-8 py-1.5 bg-white rounded-lg border-slate-300 shadow-sm focus:ring-2 focus:ring-amber-500 text-xs transition-all font-medium"
                                             />
                                             {routingSearch && (
                                                 <button 
+                                                    type="button"
+                                                    aria-label="Clear routing search"
                                                     onClick={() => setRoutingSearch('')} 
                                                     className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 p-0.5 rounded-full"
                                                 >
@@ -654,12 +588,12 @@ export default function Billing({
                                             <div className="flex items-center space-x-2">
                                                 <span>Showing <strong>{filteredRoutedPatients.length}</strong> of <strong>{routedPatients.length}</strong> routed patients</span>
                                                 {selectedCostCenter !== 'all' && (
-                                                    <span className="bg-amber-200/80 text-amber-900 px-2 py-0.5 rounded text-[10px] font-bold">
+                                                    <span className="bg-amber-200/80 text-amber-900 px-2 py-0.5 rounded text-[11px] font-bold">
                                                         Cost Center: {selectedCostCenter}
                                                     </span>
                                                 )}
                                                 {selectedWard !== 'all' && (
-                                                    <span className="bg-teal-100 text-teal-800 px-2 py-0.5 rounded text-[10px] font-bold">
+                                                    <span className="bg-teal-100 text-teal-800 px-2 py-0.5 rounded text-[11px] font-bold">
                                                         Ward: {selectedWard}
                                                     </span>
                                                 )}
@@ -679,23 +613,22 @@ export default function Billing({
                                     )}
 
                                     {/* Table Headers */}
-                                    <div className="grid grid-cols-12 gap-3 px-6 py-3 bg-white border-b border-slate-200 text-[11px] font-extrabold text-slate-500 uppercase tracking-wider sticky top-0 z-10 shadow-2xs">
-                                        <div className="col-span-3">Patient Details</div>
-                                        <div className="col-span-2">Originating Ward</div>
-                                        <div className="col-span-2">Elapsed Routing Time</div>
-                                        <div className="col-span-4">Cost Center Station Turnaround</div>
-                                        <div className="col-span-1 text-right">Breakdown</div>
+                                    <div className="grid grid-cols-12 gap-3 px-6 py-3 bg-white border-b border-slate-200 text-[11px] font-extrabold text-slate-500 uppercase tracking-wider sticky top-0 z-10 shadow-sm">
+                                        <div className="col-span-4">Patient &amp; Ward</div>
+                                        <div className="col-span-2">Elapsed Time</div>
+                                        <div className="col-span-4">Clearance Progress</div>
+                                        <div className="col-span-2 text-right">Station Timings</div>
                                     </div>
 
                                     {/* Table Body */}
                                     <div className="divide-y divide-slate-100 flex-1 overflow-y-auto">
                                         {filteredRoutedPatients.length === 0 ? (
-                                            <div className="flex flex-col items-center justify-center p-20 text-slate-400">
+                                            <div className="flex flex-col items-center justify-center p-20 text-slate-500">
                                                 <div className="bg-amber-50 p-4 rounded-full border border-amber-100 mb-3">
-                                                    <svg className="w-10 h-10 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                                    <svg className="w-10 h-10 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                                                 </div>
                                                 <h4 className="text-base font-bold text-slate-700">No Routed Patients in Queue</h4>
-                                                <p className="text-xs text-slate-400 mt-1 max-w-sm text-center">
+                                                <p className="text-xs text-slate-500 mt-1 max-w-sm text-center">
                                                     {routedPatients.length === 0 
                                                         ? 'All hospital routed patients have successfully cleared their cost centers and moved to "Ready for Print".'
                                                         : 'No patients match your current filter selections. Try clearing your filters above.'}
@@ -706,120 +639,166 @@ export default function Billing({
                                                 const elapsedMin = patient.elapsed_minutes || 0;
                                                 const isLongElapsed = elapsedMin > 45;
                                                 const isModerateElapsed = elapsedMin > 20 && elapsedMin <= 45;
+                                                const isExpanded = Boolean(expandedPatients[patient.id]);
+                                                const stations = patient.stations || [];
+                                                const pendingStations = stations.filter((st) => st.status !== 'Cleared');
+                                                const flags = [
+                                                    patient.is_oecb ? 'OECB' : null,
+                                                    patient.has_oxygen ? 'O2' : null,
+                                                ].filter(Boolean);
 
                                                 return (
-                                                    <div 
-                                                        key={patient.id} 
-                                                        className="grid grid-cols-12 gap-3 px-6 py-4 items-center bg-white hover:bg-slate-50/80 transition-colors"
-                                                    >
-                                                        {/* Patient & Enc */}
-                                                        <div className="col-span-3 border-l-4 border-amber-400 pl-3">
-                                                            <div className="font-extrabold text-sm text-slate-800 leading-snug">
-                                                                {patient.patient_name}
-                                                            </div>
-                                                            <div className="flex flex-wrap items-center gap-1.5 mt-1">
-                                                                <span className="text-[11px] font-mono font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded border border-slate-200">
-                                                                    {patient.hospital_number}
-                                                                </span>
-                                                                <span className="text-[10px] font-mono text-slate-400 truncate max-w-[120px]" title={patient.enccode}>
-                                                                    {patient.enccode}
-                                                                </span>
-                                                            </div>
-                                                        </div>
-
-                                                        {/* Originating Ward & Encoder */}
-                                                        <div className="col-span-2">
-                                                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-teal-50 text-teal-800 border border-teal-200">
-                                                                {patient.room_ward || 'Unknown Ward'}
-                                                            </span>
-                                                            {patient.encoded_by && (
-                                                                <div className="text-[11px] text-slate-500 font-medium mt-1">
-                                                                    By: <span className="text-slate-700 font-semibold">{patient.encoded_by}</span>
+                                                    <div key={patient.id} className="bg-white">
+                                                        <div className="grid grid-cols-12 gap-3 px-6 py-4 items-center hover:bg-slate-50/80 transition-colors">
+                                                            {/* Primary Scan Column: Patient, Identifier & Ward */}
+                                                            <div className="col-span-4 min-w-0">
+                                                                <div className="font-extrabold text-sm text-slate-900 leading-snug truncate">
+                                                                    {patient.patient_name}
                                                                 </div>
-                                                            )}
-                                                            <div className="flex flex-wrap gap-1 mt-1">
-                                                                {patient.is_oecb ? (
-                                                                    <span className="bg-amber-100 text-amber-800 text-[9px] font-black px-1.5 py-0.2 rounded border border-amber-300">
-                                                                        OECB
+                                                                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-1 text-xs text-slate-600">
+                                                                    <span className="font-mono font-semibold text-slate-700">
+                                                                        {patient.hospital_number}
                                                                     </span>
-                                                                ) : null}
-                                                                {patient.has_oxygen ? (
-                                                                    <span className="bg-sky-100 text-sky-800 text-[9px] font-bold px-1.5 py-0.2 rounded border border-sky-300" title={patient.oxygen_remarks}>
-                                                                        O2
+                                                                    <span className="text-slate-300" aria-hidden="true">•</span>
+                                                                    <span className="font-semibold text-teal-800">
+                                                                        {patient.room_ward || 'Unknown Ward'}
                                                                     </span>
-                                                                ) : null}
+                                                                    {flags.length > 0 && (
+                                                                        <>
+                                                                            <span className="text-slate-300" aria-hidden="true">•</span>
+                                                                            <span className="font-bold text-amber-800">{flags.join(' / ')}</span>
+                                                                        </>
+                                                                    )}
+                                                                </div>
+                                                                {patient.encoded_by && (
+                                                                    <div className="text-[11px] text-slate-500 mt-0.5">
+                                                                        Routed by {patient.encoded_by}
+                                                                    </div>
+                                                                )}
                                                             </div>
-                                                        </div>
 
-                                                        {/* Elapsed Time since Routing */}
-                                                        <div className="col-span-2">
-                                                            <div className="flex items-center space-x-1.5">
-                                                                <span className={`inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-black border ${
+                                                            {/* Elapsed Time */}
+                                                            <div className="col-span-2">
+                                                                <span className={`inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-extrabold border ${
                                                                     isLongElapsed 
-                                                                        ? 'bg-rose-50 text-rose-700 border-rose-200 animate-pulse' 
+                                                                        ? 'bg-rose-50 text-rose-700 border-rose-200 animate-pulse motion-reduce:animate-none' 
                                                                         : (isModerateElapsed ? 'bg-amber-50 text-amber-800 border-amber-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200')
                                                                 }`}>
-                                                                    <svg className="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                                                                     {patient.elapsed_formatted || '0m'}
                                                                 </span>
+                                                                <div className="text-[11px] text-slate-500 font-medium mt-1">
+                                                                    {new Date(patient.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                                </div>
                                                             </div>
-                                                            <div className="text-[10px] text-slate-400 font-medium mt-1">
-                                                                Routed: {new Date(patient.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+
+                                                            {/* Single Summary Clearance Progress */}
+                                                            <div className="col-span-4">
+                                                                <div className="flex items-center justify-between text-xs font-bold text-slate-700 mb-1.5">
+                                                                    <span>
+                                                                        {patient.cleared_stations} of {patient.total_stations} cleared
+                                                                    </span>
+                                                                    <span className="text-[11px] font-mono text-slate-500">
+                                                                        {patient.progress_percent}%
+                                                                    </span>
+                                                                </div>
+                                                                <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                                                                    <div
+                                                                        className={`h-full rounded-full transition-all duration-300 ${
+                                                                            patient.progress_percent === 100 ? 'bg-teal-600' : 'bg-amber-500'
+                                                                        }`}
+                                                                        style={{ width: `${patient.progress_percent}%` }}
+                                                                    ></div>
+                                                                </div>
+                                                                <p className="text-[11px] text-slate-600 mt-1.5 truncate">
+                                                                    {pendingStations.length > 0
+                                                                        ? `Waiting: ${pendingStations.map((st) => st.department).join(', ')}`
+                                                                        : 'All stations cleared'}
+                                                                </p>
+                                                            </div>
+
+                                                            {/* Row Expansion & Timeline Modal */}
+                                                            <div className="col-span-2 flex items-center justify-end gap-1.5">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => toggleExpandPatient(patient.id)}
+                                                                    aria-expanded={isExpanded}
+                                                                    aria-controls={`station-drawer-${patient.id}`}
+                                                                    className={`px-2.5 py-1.5 rounded-lg border text-xs font-bold inline-flex items-center gap-1 transition-colors ${
+                                                                        isExpanded
+                                                                            ? 'bg-slate-800 text-white border-slate-800'
+                                                                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                                                                    }`}
+                                                                >
+                                                                    <span>{isExpanded ? 'Hide' : 'Stations'}</span>
+                                                                    <svg className={`w-3.5 h-3.5 transition-transform ${isExpanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setInspectPatient(patient)}
+                                                                    className="p-2 text-slate-500 hover:text-teal-700 hover:bg-teal-50 rounded-lg border border-slate-200 transition-colors"
+                                                                    title="Inspect full timeline and cost center breakdown"
+                                                                    aria-label={`Inspect ${patient.patient_name} timeline`}
+                                                                >
+                                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+                                                                </button>
                                                             </div>
                                                         </div>
 
-                                                        {/* Station Clearance & Turnaround Durations */}
-                                                        <div className="col-span-4">
-                                                            <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 mb-1.5">
-                                                                <span>Progress: <strong className="text-slate-800">{patient.cleared_stations} of {patient.total_stations} cleared</strong></span>
-                                                                <span className="text-[10px] font-mono text-slate-400">{patient.progress_percent}%</span>
-                                                            </div>
-
-                                                            {/* Station Badges with exact durations */}
-                                                            <div className="flex flex-wrap gap-1.5">
-                                                                {(patient.stations || []).map((st, i) => {
-                                                                    const isCleared = st.status === 'Cleared';
-                                                                    const isFocused = selectedCostCenter === st.department;
-
-                                                                    return (
-                                                                        <div
-                                                                            key={i}
-                                                                            title={
-                                                                                isCleared 
-                                                                                    ? `${st.department}: Cleared in ${st.duration_formatted} at ${new Date(st.cleared_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} by ${st.cleared_by}` 
-                                                                                    : `${st.department}: Pending clearance (Waiting for ${st.waiting_formatted})`
-                                                                            }
-                                                                            className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold transition-all border ${
-                                                                                isFocused ? 'ring-2 ring-amber-400 font-black' : ''
-                                                                            } ${
-                                                                                isCleared
-                                                                                    ? 'bg-emerald-50 text-emerald-800 border-emerald-300 shadow-2xs'
-                                                                                    : 'bg-amber-50 text-amber-800 border-amber-300'
-                                                                            }`}
-                                                                        >
-                                                                            <span className="mr-1">{isCleared ? '✓' : '⏳'}</span>
-                                                                            <span>{st.department}</span>
-                                                                            <span className={`ml-1 font-mono text-[9px] px-1 rounded ${
-                                                                                isCleared ? 'bg-emerald-100 text-emerald-900' : 'bg-amber-100 text-amber-900'
-                                                                            }`}>
-                                                                                {isCleared ? st.duration_formatted : `wait ${st.waiting_formatted}`}
-                                                                            </span>
-                                                                        </div>
-                                                                    );
-                                                                })}
-                                                            </div>
-                                                        </div>
-
-                                                        {/* Actions / Inspect Modal */}
-                                                        <div className="col-span-1 flex justify-end">
-                                                            <button
-                                                                onClick={() => setInspectPatient(patient)}
-                                                                className="p-2 text-slate-500 hover:text-amber-700 hover:bg-amber-50 rounded-lg border border-slate-200 transition-all shadow-2xs"
-                                                                title="Inspect full timeline and cost center breakdown"
+                                                        {/* Expandable Station Timings Drawer */}
+                                                        {isExpanded && (
+                                                            <div
+                                                                id={`station-drawer-${patient.id}`}
+                                                                className="bg-slate-50 border-t border-slate-200 px-6 py-3.5"
                                                             >
-                                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
-                                                            </button>
-                                                        </div>
+                                                                <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
+                                                                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-600">
+                                                                        Station Clearance &amp; Wait Timings ({patient.enccode})
+                                                                    </span>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => setInspectPatient(patient)}
+                                                                        className="text-xs font-bold text-teal-700 hover:text-teal-900 underline"
+                                                                    >
+                                                                        Open Full Timeline Modal
+                                                                    </button>
+                                                                </div>
+                                                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                                                                    {stations.map((st, idx) => {
+                                                                        const isCleared = st.status === 'Cleared';
+                                                                        const isFocused = selectedCostCenter === st.department;
+
+                                                                        return (
+                                                                            <div
+                                                                                key={idx}
+                                                                                className={`flex items-center justify-between px-3 py-2 rounded-lg border text-xs ${
+                                                                                    isFocused ? 'ring-2 ring-amber-400' : ''
+                                                                                } ${
+                                                                                    isCleared
+                                                                                        ? 'bg-white border-emerald-200 text-slate-800'
+                                                                                        : 'bg-amber-50/70 border-amber-200 text-amber-900'
+                                                                                }`}
+                                                                            >
+                                                                                <div className="min-w-0 pr-2">
+                                                                                    <div className="font-bold truncate">{st.department}</div>
+                                                                                    <div className="text-[11px] text-slate-500 truncate">
+                                                                                        {isCleared
+                                                                                            ? `Cleared by ${st.cleared_by || 'Staff'}`
+                                                                                            : 'Pending clearance'}
+                                                                                    </div>
+                                                                                </div>
+                                                                                <span className={`shrink-0 font-mono font-bold text-[11px] px-2 py-0.5 rounded ${
+                                                                                    isCleared
+                                                                                        ? 'bg-emerald-100 text-emerald-800'
+                                                                                        : 'bg-amber-100 text-amber-900'
+                                                                                }`}>
+                                                                                    {isCleared ? st.duration_formatted : `wait ${st.waiting_formatted}`}
+                                                                                </span>
+                                                                            </div>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 );
                                             })
@@ -866,11 +845,11 @@ export default function Billing({
                                                         <div className="flex justify-between items-center text-xs">
                                                             <div className="flex items-center space-x-2">
                                                                 <span className="font-extrabold text-slate-700">{cc.name}</span>
-                                                                <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded border ${badgeColor}`}>
+                                                                <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded border ${badgeColor}`}>
                                                                     {cc.speed_rating}
                                                                 </span>
                                                                 {cc.pending_count > 0 && (
-                                                                    <span className="bg-rose-100 text-rose-700 text-[10px] font-bold px-1.5 py-0.2 rounded font-mono">
+                                                                    <span className="bg-rose-100 text-rose-700 text-[11px] font-bold px-1.5 py-0.5 rounded font-mono">
                                                                         {cc.pending_count} currently waiting
                                                                     </span>
                                                                 )}
@@ -928,7 +907,7 @@ export default function Billing({
                                                                 {cc.avg_formatted}
                                                             </td>
                                                             <td className="p-3">
-                                                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${
+                                                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold ${
                                                                     cc.speed_rating === 'Fast'
                                                                         ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
                                                                         : (cc.speed_rating === 'Moderate' ? 'bg-amber-50 text-amber-800 border border-amber-200' : 'bg-rose-50 text-rose-800 border border-rose-200')
@@ -941,13 +920,13 @@ export default function Billing({
                                                             <td className="p-3">
                                                                 <span className="font-bold text-slate-700">{cc.today_cleared}</span>
                                                                 {cc.today_cleared > 0 && (
-                                                                    <span className="text-[10px] text-slate-400 ml-1">({cc.today_avg_formatted} avg)</span>
+                                                                    <span className="text-[11px] text-slate-400 ml-1">({cc.today_avg_formatted} avg)</span>
                                                                 )}
                                                             </td>
                                                             <td className="p-3 font-mono font-bold text-slate-700">{cc.total_cleared.toLocaleString()}</td>
                                                             <td className="p-3">
                                                                 {cc.pending_count > 0 ? (
-                                                                    <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                                                                    <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
                                                                         {cc.pending_count} waiting
                                                                     </span>
                                                                 ) : (
@@ -996,10 +975,7 @@ export default function Billing({
                                                 : 'Full archive of all printed and finalized patient clearances.'}
                                         </p>
                                     </div>
-                                    <span className="flex h-2 w-2 relative -mt-3" title="Live Sync Active">
-                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal-400 opacity-75"></span>
-                                        <span className="relative inline-flex rounded-full h-2 w-2 bg-teal-500"></span>
-                                    </span>
+                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-teal-500 -mt-3" title="Live Sync Active"></span>
                                 </div>
                                 
                                 <div className="flex items-center space-x-2 w-full md:w-auto">
@@ -1032,9 +1008,11 @@ export default function Billing({
                                         />
                                         {searchTerm && (
                                             <button 
+                                                type="button"
                                                 onClick={() => setSearchTerm('')} 
                                                 className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 p-0.5 rounded-full"
                                                 title="Clear search"
+                                                aria-label="Clear search"
                                             >
                                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                                             </button>
@@ -1048,6 +1026,19 @@ export default function Billing({
                                 <div className="px-6 py-2 bg-teal-50 text-teal-700 text-xs font-semibold flex items-center space-x-2 border-b border-teal-100">
                                     <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
                                     <span>Searching database archives across all {totalArchivedCount.toLocaleString()} records...</span>
+                                </div>
+                            )}
+
+                            {archiveError && (
+                                <div role="alert" className="mx-6 mt-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs font-semibold text-rose-800 flex items-center justify-between gap-3">
+                                    <span>{archiveError}</span>
+                                    <button
+                                        type="button"
+                                        onClick={() => setArchiveError(null)}
+                                        className="text-rose-600 hover:text-rose-900 font-bold"
+                                    >
+                                        Dismiss
+                                    </button>
                                 </div>
                             )}
 
@@ -1087,51 +1078,85 @@ export default function Billing({
                                                     <div className="text-[11px] font-mono break-all px-2 py-1 rounded-md border bg-slate-50 text-slate-600 border-slate-200 uppercase">
                                                         {patient.enccode}
                                                     </div>
-                                                    <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-1.5">
+                                                    <div className="text-[11px] text-slate-400 font-bold uppercase tracking-wider mt-1.5">
                                                         Routed: {new Date(patient.created_at).toLocaleDateString('en-US', { timeZone: 'Asia/Manila' })}
                                                     </div>
                                                 </div>
                                                 
                                                 <div className="col-span-2 flex justify-center">
                                                     {activeTab === 'ready' ? (
-                                                        <span className="bg-emerald-50 text-emerald-700 text-[10px] font-bold px-3 py-1.5 rounded-md border border-emerald-200 uppercase tracking-wide inline-flex items-center shadow-sm">
+                                                        <span className="bg-emerald-50 text-emerald-700 text-[11px] font-bold px-3 py-1.5 rounded-md border border-emerald-200 uppercase tracking-wide inline-flex items-center shadow-sm">
                                                             <svg className="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
                                                             Cleared
                                                         </span>
                                                     ) : (
-                                                        <span className="bg-slate-100 text-slate-600 text-[10px] font-bold px-3 py-1.5 rounded-md border border-slate-200 uppercase tracking-wide inline-flex items-center shadow-sm">
+                                                        <span className="bg-slate-100 text-slate-600 text-[11px] font-bold px-3 py-1.5 rounded-md border border-slate-200 uppercase tracking-wide inline-flex items-center shadow-sm">
                                                             <svg className="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path></svg>
                                                             Archived
                                                         </span>
                                                     )}
                                                 </div>
                                                 
-                                                <div className="col-span-3 flex justify-end pr-2">
-                                                    <button 
-                                                        onClick={() => activeTab === 'ready' ? handlePrintAndArchive(patient.enccode) : handleReprint(patient.enccode)}
-                                                        disabled={printingEncounter === patient.enccode}
-                                                        className={`inline-flex justify-center items-center px-4 py-2.5 rounded-lg text-sm font-bold transition-all shadow-sm focus:outline-none w-full xl:w-auto
-                                                            ${printingEncounter === patient.enccode 
-                                                                ? 'bg-slate-200 text-slate-500 cursor-not-allowed' 
-                                                                : (activeTab === 'ready' ? 'bg-teal-600 text-white hover:bg-teal-700 hover:shadow-md' : 'bg-slate-700 text-white hover:bg-slate-800 hover:shadow-md')}`}
-                                                    >
-                                                        {printingEncounter === patient.enccode ? (
+                                                <div className="col-span-3 flex flex-wrap justify-end gap-2 pr-2">
+                                                    {activeTab === 'ready' ? (
+                                                        awaitingArchiveConfirm === patient.enccode ? (
                                                             <>
-                                                                <svg className="w-4 h-4 mr-2 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                                                                <span>Processing...</span>
-                                                            </>
-                                                        ) : activeTab === 'ready' ? (
-                                                            <>
-                                                                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
-                                                                <span>Print & Archive</span>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleConfirmArchive(patient.enccode)}
+                                                                    disabled={archivingEncounter === patient.enccode}
+                                                                    className="inline-flex justify-center items-center px-3.5 py-2 rounded-lg text-xs font-bold transition-all shadow-sm bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                                >
+                                                                    {archivingEncounter === patient.enccode ? (
+                                                                        <>
+                                                                            <svg className="w-3.5 h-3.5 mr-1.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                                                            <span>Archiving...</span>
+                                                                        </>
+                                                                    ) : (
+                                                                        <>
+                                                                            <svg className="w-3.5 h-3.5 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7"></path></svg>
+                                                                            <span>Confirm Printed & Archive</span>
+                                                                        </>
+                                                                    )}
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleOpenPrint(patient.enccode)}
+                                                                    disabled={archivingEncounter === patient.enccode}
+                                                                    className="inline-flex justify-center items-center px-3 py-2 rounded-lg text-xs font-bold transition-all border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                                                                >
+                                                                    Print Again
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={handleCancelPrintArchive}
+                                                                    disabled={archivingEncounter === patient.enccode}
+                                                                    className="inline-flex justify-center items-center px-2.5 py-2 rounded-lg text-xs font-bold text-slate-500 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                                                                >
+                                                                    Cancel
+                                                                </button>
                                                             </>
                                                         ) : (
-                                                            <>
-                                                                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
-                                                                <span>Reprint</span>
-                                                            </>
-                                                        )}
-                                                    </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleOpenPrint(patient.enccode)}
+                                                                disabled={archivingEncounter === patient.enccode}
+                                                                className="inline-flex justify-center items-center px-4 py-2.5 rounded-lg text-sm font-bold transition-all shadow-sm focus:outline-none w-full xl:w-auto bg-teal-600 text-white hover:bg-teal-700 hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                                                            >
+                                                                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+                                                                <span>Print F07</span>
+                                                            </button>
+                                                        )
+                                                    ) : (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleOpenPrint(patient.enccode)}
+                                                            className="inline-flex justify-center items-center px-4 py-2.5 rounded-lg text-sm font-bold transition-all shadow-sm focus:outline-none w-full xl:w-auto bg-slate-700 text-white hover:bg-slate-800 hover:shadow-md"
+                                                        >
+                                                            <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                                                            <span>Reprint</span>
+                                                        </button>
+                                                    )}
                                                 </div>
 
                                             </div>
@@ -1142,6 +1167,7 @@ export default function Billing({
                                 {/* SAFE FETCH URL ENCODING FOR IFRAME */}
                                 {printingEncounter && (
                                     <iframe 
+                                        key={`${printingEncounter}-${printSequence}`}
                                         src={`/print-clearance/document?enccode=${encodeURIComponent(printingEncounter)}`} 
                                         style={{ 
                                             position: 'fixed', 
@@ -1164,7 +1190,7 @@ export default function Billing({
                                             Showing <strong className="text-slate-800">{archivePagination.from?.toLocaleString() || 0}</strong> to <strong className="text-slate-800">{archivePagination.to?.toLocaleString() || 0}</strong> of <strong className="text-slate-800 font-bold">{archivePagination.total?.toLocaleString() || 0}</strong> records
                                         </span>
                                         {searchTerm && (
-                                            <span className="bg-amber-100 text-amber-800 px-2 py-0.5 rounded text-[10px] font-bold">
+                                            <span className="bg-amber-100 text-amber-800 px-2 py-0.5 rounded text-[11px] font-bold">
                                                 Filtered by "{searchTerm}"
                                             </span>
                                         )}
@@ -1172,10 +1198,12 @@ export default function Billing({
 
                                     <div className="flex items-center space-x-1">
                                         <button
+                                            type="button"
                                             onClick={() => handlePageChange(1)}
                                             disabled={archivePagination.current_page <= 1}
                                             className="p-1.5 rounded-md border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-slate-600"
                                             title="First Page"
+                                            aria-label="First page"
                                         >
                                             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"></path></svg>
                                         </button>
@@ -1213,10 +1241,12 @@ export default function Billing({
                                         </button>
 
                                         <button
+                                            type="button"
                                             onClick={() => handlePageChange(archivePagination.last_page)}
                                             disabled={archivePagination.current_page >= archivePagination.last_page}
                                             className="p-1.5 rounded-md border border-slate-300 bg-white hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-slate-600"
                                             title="Last Page"
+                                            aria-label="Last page"
                                         >
                                             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"></path></svg>
                                         </button>
@@ -1253,14 +1283,18 @@ export default function Billing({
             {/* ========================================================================= */}
             {/* MODAL 1: PATIENT CLEARANCE TIMELINE & COST CENTER BREAKDOWN               */}
             {/* ========================================================================= */}
-            {inspectPatient && (
-                <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-                    <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
-                        
+            <Modal
+                show={Boolean(inspectPatient)}
+                onClose={() => setInspectPatient(null)}
+                maxWidth="2xl"
+                panelClassName="rounded-2xl border border-slate-200 max-h-[90vh] flex flex-col"
+            >
+                {inspectPatient && (
+                    <>
                         {/* Modal Header */}
-                        <div className="p-6 bg-slate-50 border-b border-slate-200 flex justify-between items-start">
+                        <div className="p-6 bg-slate-50 border-b border-slate-200 flex justify-between items-start shrink-0">
                             <div>
-                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 uppercase tracking-wider mb-1.5">
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-300 uppercase tracking-wider mb-1.5">
                                     Patient Clearance Timeline
                                 </span>
                                 <h3 className="text-xl font-extrabold text-slate-800">
@@ -1279,6 +1313,8 @@ export default function Billing({
                                 </div>
                             </div>
                             <button
+                                type="button"
+                                aria-label="Close modal"
                                 onClick={() => setInspectPatient(null)}
                                 className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 rounded-xl transition-colors"
                             >
@@ -1287,30 +1323,30 @@ export default function Billing({
                         </div>
 
                         {/* Modal Content */}
-                        <div className="p-6 space-y-6">
+                        <div className="p-6 space-y-6 overflow-y-auto flex-1">
                             
                             {/* Elapsed & Progress Summary */}
                             <div className="grid grid-cols-3 gap-3 p-4 bg-slate-50 rounded-xl border border-slate-200 text-center">
                                 <div>
-                                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Routed Time</div>
+                                    <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Routed Time</div>
                                     <div className="text-sm font-extrabold text-slate-800 mt-0.5">
                                         {new Date(inspectPatient.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                     </div>
-                                    <div className="text-[10px] text-slate-500 font-medium">{new Date(inspectPatient.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}</div>
+                                    <div className="text-[11px] text-slate-500 font-medium">{new Date(inspectPatient.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}</div>
                                 </div>
                                 <div>
-                                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total Elapsed</div>
+                                    <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Total Elapsed</div>
                                     <div className="text-sm font-extrabold text-amber-700 mt-0.5">
                                         {inspectPatient.elapsed_formatted || '0m'}
                                     </div>
-                                    <div className="text-[10px] text-slate-500 font-medium">In routing queue</div>
+                                    <div className="text-[11px] text-slate-500 font-medium">In routing queue</div>
                                 </div>
                                 <div>
-                                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Stations Cleared</div>
+                                    <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Stations Cleared</div>
                                     <div className="text-sm font-extrabold text-emerald-700 mt-0.5">
                                         {inspectPatient.cleared_stations} / {inspectPatient.total_stations}
                                     </div>
-                                    <div className="text-[10px] text-slate-500 font-medium">{inspectPatient.progress_percent}% completed</div>
+                                    <div className="text-[11px] text-slate-500 font-medium">{inspectPatient.progress_percent}% completed</div>
                                 </div>
                             </div>
 
@@ -1319,10 +1355,10 @@ export default function Billing({
                                 <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2.5">
                                     Cost Center Turnaround Breakdown
                                 </h4>
-                                <div className="border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
+                                <div className="border border-slate-200 rounded-xl overflow-hidden shadow-sm">
                                     <table className="w-full text-left border-collapse text-xs">
                                         <thead>
-                                            <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
+                                            <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-extrabold uppercase tracking-wider text-slate-500">
                                                 <th className="p-3 pl-4">Cost Center Station</th>
                                                 <th className="p-3">Status</th>
                                                 <th className="p-3">Turnaround / Waiting</th>
@@ -1339,7 +1375,7 @@ export default function Billing({
                                                             {st.department}
                                                         </td>
                                                         <td className="p-3">
-                                                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${
+                                                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold ${
                                                                 isCleared
                                                                     ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                                                                     : 'bg-amber-50 text-amber-700 border border-amber-200'
@@ -1377,29 +1413,34 @@ export default function Billing({
                         </div>
 
                         {/* Modal Footer */}
-                        <div className="p-4 px-6 bg-slate-50 border-t border-slate-200 flex justify-end">
+                        <div className="p-4 px-6 bg-slate-50 border-t border-slate-200 flex justify-end shrink-0">
                             <button
+                                type="button"
                                 onClick={() => setInspectPatient(null)}
                                 className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-lg text-xs font-bold transition-colors"
                             >
                                 Close
                             </button>
                         </div>
-                    </div>
-                </div>
-            )}
+                    </>
+                )}
+            </Modal>
 
             {/* ========================================================================= */}
             {/* MODAL 2: COST CENTER DEEP-DIVE & TURNAROUND BENCHMARKS                   */}
             {/* ========================================================================= */}
-            {inspectCostCenter && (
-                <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-                    <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
-                        
+            <Modal
+                show={Boolean(inspectCostCenter)}
+                onClose={() => setInspectCostCenter(null)}
+                maxWidth="2xl"
+                panelClassName="rounded-2xl border border-slate-200 max-h-[90vh] flex flex-col"
+            >
+                {inspectCostCenter && (
+                    <>
                         {/* Modal Header */}
-                        <div className="p-6 bg-slate-50 border-b border-slate-200 flex justify-between items-start">
+                        <div className="p-6 bg-slate-50 border-b border-slate-200 flex justify-between items-start shrink-0">
                             <div>
-                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-teal-100 text-teal-800 border border-teal-300 uppercase tracking-wider mb-1.5">
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-teal-100 text-teal-800 border border-teal-300 uppercase tracking-wider mb-1.5">
                                     Cost Center Analytics
                                 </span>
                                 <h3 className="text-xl font-extrabold text-slate-800">
@@ -1410,6 +1451,8 @@ export default function Billing({
                                 </p>
                             </div>
                             <button
+                                type="button"
+                                aria-label="Close modal"
                                 onClick={() => setInspectCostCenter(null)}
                                 className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 rounded-xl transition-colors"
                             >
@@ -1423,26 +1466,26 @@ export default function Billing({
                             {/* Summary Cards */}
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                                 <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 text-center">
-                                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">30-Day Avg</div>
+                                    <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">30-Day Avg</div>
                                     <div className="text-xl font-black text-slate-800 mt-0.5">{inspectCostCenter.avg_formatted}</div>
-                                    <div className="text-[10px] text-teal-700 font-bold mt-0.5">{inspectCostCenter.speed_rating} rating</div>
+                                    <div className="text-[11px] text-teal-700 font-bold mt-0.5">{inspectCostCenter.speed_rating} rating</div>
                                 </div>
                                 <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 text-center">
-                                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Fastest Clear</div>
+                                    <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Fastest Clear</div>
                                     <div className="text-xl font-black text-emerald-700 mt-0.5">{inspectCostCenter.min_formatted}</div>
-                                    <div className="text-[10px] text-slate-400 font-medium mt-0.5">Best record</div>
+                                    <div className="text-[11px] text-slate-400 font-medium mt-0.5">Best record</div>
                                 </div>
                                 <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 text-center">
-                                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Today Cleared</div>
+                                    <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Today Cleared</div>
                                     <div className="text-xl font-black text-sky-800 mt-0.5">{inspectCostCenter.today_cleared}</div>
-                                    <div className="text-[10px] text-slate-500 font-medium mt-0.5">{inspectCostCenter.today_avg_formatted} avg today</div>
+                                    <div className="text-[11px] text-slate-500 font-medium mt-0.5">{inspectCostCenter.today_avg_formatted} avg today</div>
                                 </div>
                                 <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 text-center">
-                                    <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">In Queue Now</div>
+                                    <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">In Queue Now</div>
                                     <div className={`text-xl font-black mt-0.5 ${inspectCostCenter.pending_count > 0 ? 'text-amber-700' : 'text-slate-700'}`}>
                                         {inspectCostCenter.pending_count}
                                     </div>
-                                    <div className="text-[10px] text-slate-400 font-medium mt-0.5">Patients waiting</div>
+                                    <div className="text-[11px] text-slate-400 font-medium mt-0.5">Patients waiting</div>
                                 </div>
                             </div>
 
@@ -1451,14 +1494,14 @@ export default function Billing({
                                 <div>
                                     <h4 className="text-xs font-bold text-amber-800 uppercase tracking-wider mb-2 flex items-center space-x-1.5">
                                         <span>⏳ Patients Currently Waiting for {inspectCostCenter.name}</span>
-                                        <span className="bg-amber-100 text-amber-900 px-1.5 py-0.2 rounded-full font-mono text-[10px]">
+                                        <span className="bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded-full font-mono text-[11px]">
                                             {inspectCostCenter.pending_count}
                                         </span>
                                     </h4>
                                     <div className="border border-amber-200 bg-amber-50/40 rounded-xl overflow-hidden">
                                         <table className="w-full text-left text-xs border-collapse">
                                             <thead>
-                                                <tr className="bg-amber-100/60 border-b border-amber-200 text-[10px] font-bold uppercase text-amber-900">
+                                                <tr className="bg-amber-100/60 border-b border-amber-200 text-[11px] font-bold uppercase text-amber-900">
                                                     <th className="p-2.5 pl-4">Patient Name</th>
                                                     <th className="p-2.5">Hosp #</th>
                                                     <th className="p-2.5">Originating Ward</th>
@@ -1497,7 +1540,7 @@ export default function Billing({
                                     <div className="border border-slate-200 rounded-xl overflow-hidden">
                                         <table className="w-full text-left text-xs border-collapse">
                                             <thead>
-                                                <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-extrabold uppercase text-slate-500">
+                                                <tr className="bg-slate-50 border-b border-slate-200 text-[11px] font-extrabold uppercase text-slate-500">
                                                     <th className="p-2.5 pl-4">Patient Name</th>
                                                     <th className="p-2.5">Ward</th>
                                                     <th className="p-2.5">Time Taken</th>
@@ -1540,22 +1583,23 @@ export default function Billing({
                                     setRoutingSubView('queue');
                                     setInspectCostCenter(null);
                                 }}
-                                className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold transition-colors shadow-2xs flex items-center space-x-1"
+                                className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold transition-colors shadow-sm flex items-center space-x-1"
                             >
                                 <span>Filter Routing Queue by {inspectCostCenter.name}</span>
                                 <span>→</span>
                             </button>
 
                             <button
+                                type="button"
                                 onClick={() => setInspectCostCenter(null)}
                                 className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-lg text-xs font-bold transition-colors"
                             >
                                 Close
                             </button>
                         </div>
-                    </div>
-                </div>
-            )}
+                    </>
+                )}
+            </Modal>
 
         </PortalLayout>
     );

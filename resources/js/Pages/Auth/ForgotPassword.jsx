@@ -1,8 +1,9 @@
 import InputError from '@/Components/InputError';
+import InputLabel from '@/Components/InputLabel';
 import PrimaryButton from '@/Components/PrimaryButton';
 import TextInput from '@/Components/TextInput';
 import GuestLayout from '@/Layouts/GuestLayout';
-import { Head, useForm } from '@inertiajs/react';
+import { Head, Link, useForm } from '@inertiajs/react';
 
 export default function ForgotPassword({ status }) {
     const { data, setData, post, processing, errors } = useForm({
@@ -19,34 +20,48 @@ export default function ForgotPassword({ status }) {
         <GuestLayout>
             <Head title="Forgot Password" />
 
-            <div className="mb-4 text-sm text-gray-600">
-                Forgot your password? No problem. Just let us know your email
-                address and we will email you a password reset link that will
-                allow you to choose a new one.
+            <div className="mb-5">
+                <h1 className="text-xl font-extrabold text-slate-900">
+                    Reset Your Password
+                </h1>
+                <p className="mt-1 text-sm text-slate-600">
+                    Enter your registered email address and we will send a password reset link.
+                </p>
             </div>
 
             {status && (
-                <div className="mb-4 text-sm font-medium text-green-600">
+                <div role="status" className="mb-4 rounded-lg border border-teal-200 bg-teal-50 px-3.5 py-2.5 text-sm font-medium text-teal-800">
                     {status}
                 </div>
             )}
 
-            <form onSubmit={submit}>
-                <TextInput
-                    id="email"
-                    type="email"
-                    name="email"
-                    value={data.email}
-                    className="mt-1 block w-full"
-                    isFocused={true}
-                    onChange={(e) => setData('email', e.target.value)}
-                />
+            <form onSubmit={submit} className="space-y-4">
+                <div>
+                    <InputLabel htmlFor="email" value="Email Address" />
 
-                <InputError message={errors.email} className="mt-2" />
+                    <TextInput
+                        id="email"
+                        type="email"
+                        name="email"
+                        value={data.email}
+                        className="mt-1 block w-full"
+                        isFocused={true}
+                        placeholder="staff@rmph.gov.ph"
+                        onChange={(e) => setData('email', e.target.value)}
+                    />
 
-                <div className="mt-4 flex items-center justify-end">
-                    <PrimaryButton className="ms-4" disabled={processing}>
-                        Email Password Reset Link
+                    <InputError message={errors.email} className="mt-2" />
+                </div>
+
+                <div className="flex items-center justify-between pt-2">
+                    <Link
+                        href={route('login')}
+                        className="text-sm font-semibold text-teal-600 hover:text-teal-700 underline rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
+                    >
+                        Back to Login
+                    </Link>
+                    <PrimaryButton disabled={processing}>
+                        Email Reset Link
                     </PrimaryButton>
                 </div>
             </form>

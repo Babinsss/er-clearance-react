@@ -1,4 +1,4 @@
-import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
+import PortalLayout from '@/Layouts/PortalLayout';
 import { Head } from '@inertiajs/react';
 import DeleteUserForm from './Partials/DeleteUserForm';
 import UpdatePasswordForm from './Partials/UpdatePasswordForm';
@@ -6,18 +6,21 @@ import UpdateProfileInformationForm from './Partials/UpdateProfileInformationFor
 
 export default function Edit({ mustVerifyEmail, status }) {
     return (
-        <AuthenticatedLayout
-            header={
-                <h2 className="text-xl font-semibold leading-tight text-gray-800">
-                    Profile
-                </h2>
-            }
-        >
+        <PortalLayout>
             <Head title="Profile" />
 
-            <div className="py-12">
-                <div className="mx-auto max-w-7xl space-y-6 sm:px-6 lg:px-8">
-                    <div className="bg-white p-4 shadow sm:rounded-lg sm:p-8">
+            <div className="w-full bg-slate-100 py-8 px-4 sm:px-6 lg:px-8">
+                <div className="mx-auto max-w-4xl space-y-6">
+                    <div className="border-b border-slate-200 pb-4">
+                        <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
+                            Account &amp; Profile Settings
+                        </h1>
+                        <p className="mt-1 text-sm text-slate-600">
+                            Manage your display name, email address, and password for RMPH Clearance.
+                        </p>
+                    </div>
+
+                    <div className="bg-white p-6 shadow-sm border border-slate-200 rounded-xl sm:p-8">
                         <UpdateProfileInformationForm
                             mustVerifyEmail={mustVerifyEmail}
                             status={status}
@@ -25,15 +28,15 @@ export default function Edit({ mustVerifyEmail, status }) {
                         />
                     </div>
 
-                    <div className="bg-white p-4 shadow sm:rounded-lg sm:p-8">
+                    <div className="bg-white p-6 shadow-sm border border-slate-200 rounded-xl sm:p-8">
                         <UpdatePasswordForm className="max-w-xl" />
                     </div>
 
-                    <div className="bg-white p-4 shadow sm:rounded-lg sm:p-8">
+                    <div className="bg-white p-6 shadow-sm border border-slate-200 rounded-xl sm:p-8">
                         <DeleteUserForm className="max-w-xl" />
                     </div>
                 </div>
             </div>
-        </AuthenticatedLayout>
+        </PortalLayout>
     );
 }

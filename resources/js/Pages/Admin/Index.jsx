@@ -2,15 +2,31 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Head, router } from '@inertiajs/react';
 import PortalLayout from '@/Layouts/PortalLayout';
 import TurnaroundChart from '@/Components/TurnaroundChart'; // <-- IMPORTED CHART
+import Modal from '@/Components/Modal';
+import ConfirmDialog from '@/Components/ConfirmDialog';
 
 export default function AdminDashboard({ staff = [], departments = [], transactions = [] }) {
     // Default to analytics tab so the chart is the first thing the Admin sees
     const [activeTab, setActiveTab] = useState('analytics'); 
-    const [searchTerm, setSearchTerm] = useState('');
+    const [searchTerms, setSearchTerms] = useState({
+        patients: '',
+        staff: '',
+        departments: '',
+    });
     const [toastMessage, setToastMessage] = useState(null);
     const [patientFilter, setPatientFilter] = useState('all');
     const [staffFilter, setStaffFilter] = useState('all'); // 'all', 'online', 'offline'
+    const [confirmState, setConfirmState] = useState(null);
+    const [isConfirmRunning, setIsConfirmRunning] = useState(false);
     const isFirstMount = useRef(true);
+
+    const activeSearchTerm = searchTerms[activeTab] || '';
+    const updateActiveSearchTerm = (value) => {
+        setSearchTerms((prev) => ({
+            ...prev,
+            [activeTab]: value,
+        }));
+    };
     
     // Auto-refresh every 15s to keep active users and clearance queues updated
     useEffect(() => {
@@ -33,15 +49,16 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
 
         if (activeTab !== 'patients') return;
 
+        const patientsTerm = (searchTerms.patients || '').trim();
         const timer = setTimeout(() => {
             router.get('/admin', 
-                searchTerm.trim() ? { search: searchTerm.trim() } : {},
+                patientsTerm ? { search: patientsTerm } : {},
                 { preserveState: true, preserveScroll: true, only: ['transactions'] }
             );
         }, 350);
 
         return () => clearTimeout(timer);
-    }, [searchTerm, activeTab]);
+    }, [searchTerms.patients, activeTab]);
 
     const activeUsersCount = staff.filter(u => u.is_online).length;
 
@@ -73,7 +90,7 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
     const [isSavingPatient, setIsSavingPatient] = useState(false);
 
     const filteredStaff = staff.filter(user => {
-        const term = searchTerm.toLowerCase();
+        const term = (searchTerms.staff || '').toLowerCase();
         const matchesSearch = 
             (user.name || '').toLowerCase().includes(term) || 
             (user.department || '').toLowerCase().includes(term) ||
@@ -86,13 +103,14 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
         return true;
     });
 
+    const deptTerm = (searchTerms.departments || '').toLowerCase();
     const filteredDepts = departments.filter(dept => 
-        dept.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-        dept.category.toLowerCase().includes(searchTerm.toLowerCase())
+        dept.name.toLowerCase().includes(deptTerm) || 
+        dept.category.toLowerCase().includes(deptTerm)
     );
 
     const filteredTransactions = transactions.filter(tx => {
-        const term = searchTerm.toLowerCase();
+        const term = (searchTerms.patients || '').toLowerCase();
         const matchesSearch = 
             (tx.patient_name || '').toLowerCase().includes(term) || 
             (tx.hospital_number || '').includes(term) ||
@@ -113,30 +131,63 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
 
     // --- PATIENT ROUTING HANDLERS ---
     const handleCancelPatient = (id, name) => {
-        if (confirm(`Are you sure you want to CANCEL clearance routing for ${name}?\n\nThis will immediately remove the patient from all clinical cost center queues.`)) {
-            router.post(`/admin/transactions/${id}/cancel`, {}, {
-                preserveScroll: true,
-                onSuccess: () => showToast(`Clearance routing for ${name} has been cancelled.`)
-            });
-        }
+        setConfirmState({
+            title: 'Cancel Clearance Routing',
+            message: `Are you sure you want to CANCEL clearance routing for ${name}?\n\nThis will immediately remove the patient from all clinical cost center queues.`,
+            confirmLabel: 'Yes, Cancel Routing',
+            tone: 'warning',
+            onConfirm: () => {
+                setIsConfirmRunning(true);
+                router.post(`/admin/transactions/${id}/cancel`, {}, {
+                    preserveScroll: true,
+                    onSuccess: () => {
+                        setConfirmState(null);
+                        showToast(`Clearance routing for ${name} has been cancelled.`);
+                    },
+                    onFinish: () => setIsConfirmRunning(false),
+                });
+            },
+        });
     };
 
     const handleReactivatePatient = (id, name) => {
-        if (confirm(`Re-activate clearance routing for ${name}?`)) {
-            router.post(`/admin/transactions/${id}/reactivate`, {}, {
-                preserveScroll: true,
-                onSuccess: () => showToast(`Clearance routing for ${name} has been re-activated.`)
-            });
-        }
+        setConfirmState({
+            title: 'Re-activate Clearance Routing',
+            message: `Re-activate clearance routing for ${name}?`,
+            confirmLabel: 'Yes, Re-activate',
+            tone: 'teal',
+            onConfirm: () => {
+                setIsConfirmRunning(true);
+                router.post(`/admin/transactions/${id}/reactivate`, {}, {
+                    preserveScroll: true,
+                    onSuccess: () => {
+                        setConfirmState(null);
+                        showToast(`Clearance routing for ${name} has been re-activated.`);
+                    },
+                    onFinish: () => setIsConfirmRunning(false),
+                });
+            },
+        });
     };
 
     const handleDeletePatient = (id, name) => {
-        if (confirm(`Permanently DELETE the routing record for ${name}?\n\nThis action cannot be undone.`)) {
-            router.delete(`/admin/transactions/${id}`, {
-                preserveScroll: true,
-                onSuccess: () => showToast(`Routing record for ${name} has been permanently deleted.`)
-            });
-        }
+        setConfirmState({
+            title: 'Delete Routing Record',
+            message: `Permanently DELETE the routing record for ${name}?\n\nThis action cannot be undone.`,
+            confirmLabel: 'Delete Permanently',
+            tone: 'danger',
+            onConfirm: () => {
+                setIsConfirmRunning(true);
+                router.delete(`/admin/transactions/${id}`, {
+                    preserveScroll: true,
+                    onSuccess: () => {
+                        setConfirmState(null);
+                        showToast(`Routing record for ${name} has been permanently deleted.`);
+                    },
+                    onFinish: () => setIsConfirmRunning(false),
+                });
+            },
+        });
     };
 
     const openEditPatientModal = (tx) => {
@@ -232,12 +283,23 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
     };
 
     const handleDeleteUser = (id, name) => {
-        if (confirm(`Delete the account for ${name}?`)) {
-            router.delete(`/admin/users/${id}`, {
-                preserveScroll: true,
-                onSuccess: () => showToast(`Account for ${name} has been deleted.`)
-            });
-        }
+        setConfirmState({
+            title: 'Delete Staff Account',
+            message: `Delete the account for ${name}?`,
+            confirmLabel: 'Delete Account',
+            tone: 'danger',
+            onConfirm: () => {
+                setIsConfirmRunning(true);
+                router.delete(`/admin/users/${id}`, {
+                    preserveScroll: true,
+                    onSuccess: () => {
+                        setConfirmState(null);
+                        showToast(`Account for ${name} has been deleted.`);
+                    },
+                    onFinish: () => setIsConfirmRunning(false),
+                });
+            },
+        });
     };
 
     // --- DEPARTMENT HANDLERS ---
@@ -274,12 +336,23 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
     };
 
     const handleDeleteDepartment = (id, name) => {
-        if (confirm(`Delete ${name} from the system? This will remove it from all dropdowns.`)) {
-            router.delete(`/admin/departments/${id}`, {
-                preserveScroll: true,
-                onSuccess: () => showToast(`${name} has been removed.`)
-            });
-        }
+        setConfirmState({
+            title: 'Delete Department',
+            message: `Delete ${name} from the system? This will remove it from all dropdowns.`,
+            confirmLabel: 'Delete Department',
+            tone: 'danger',
+            onConfirm: () => {
+                setIsConfirmRunning(true);
+                router.delete(`/admin/departments/${id}`, {
+                    preserveScroll: true,
+                    onSuccess: () => {
+                        setConfirmState(null);
+                        showToast(`${name} has been removed.`);
+                    },
+                    onFinish: () => setIsConfirmRunning(false),
+                });
+            },
+        });
     };
 
     const availableWards = departments.filter(d => d.category === 'Ward').map(d => d.name);
@@ -295,7 +368,7 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
                 <div className="bg-slate-900 rounded-xl shadow-sm border border-slate-800 p-5 flex flex-col shrink-0 w-full md:w-[260px] text-white relative overflow-hidden">
                     <div className="absolute inset-0 bg-gradient-to-b from-slate-800 to-transparent opacity-50"></div>
                     <div className="relative z-10 mb-8 px-2 pt-2 border-b border-slate-700 pb-4">
-                        <h2 className="text-[10px] font-black text-teal-400 uppercase tracking-widest mb-1">System Administration</h2>
+                        <h2 className="text-[11px] font-black text-teal-400 uppercase tracking-widest mb-1">System Administration</h2>
                         <div className="text-xl font-bold text-white">ICT Portal</div>
                     </div>
 
@@ -324,7 +397,7 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
                             </div>
                             {activeUsersCount > 0 && (
                                 <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[11px] px-2 py-0.5 rounded-full font-bold flex items-center space-x-1.5">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse motion-reduce:animate-none"></span>
                                     <span>{activeUsersCount} Online</span>
                                 </span>
                             )}
@@ -388,7 +461,7 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
                                         onClick={() => setStaffFilter('online')}
                                         className={`px-2.5 py-1 rounded-md transition-all flex items-center space-x-1.5 ${staffFilter === 'online' ? 'bg-white text-emerald-800 shadow-sm' : 'text-emerald-700 hover:text-emerald-900'}`}
                                     >
-                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse motion-reduce:animate-none"></span>
                                         <span>Online ({activeUsersCount})</span>
                                     </button>
                                     <button
@@ -405,8 +478,8 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
                                     <svg className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
                                     <input 
                                         type="text" 
-                                        value={searchTerm}
-                                        onChange={e => setSearchTerm(e.target.value)}
+                                        value={activeSearchTerm}
+                                        onChange={e => updateActiveSearchTerm(e.target.value)}
                                         className="w-full pl-9 pr-3 py-2 rounded-lg border-slate-300 shadow-sm focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm transition-all" 
                                         placeholder={`Search ${activeTab === 'patients' ? 'patients, hospital #...' : activeTab}...`}
                                     />
@@ -481,12 +554,12 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
                                                                 Routed: {new Date(tx.created_at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })} {new Date(tx.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                                             </span>
                                                             {tx.is_oecb ? (
-                                                                <span className="bg-amber-100 text-amber-800 text-[10px] font-black px-1.5 py-0.5 rounded border border-amber-300">
+                                                                <span className="bg-amber-100 text-amber-800 text-[11px] font-black px-1.5 py-0.5 rounded border border-amber-300">
                                                                     OECB
                                                                 </span>
                                                             ) : null}
                                                             {tx.has_oxygen ? (
-                                                                <span className="bg-sky-100 text-sky-800 text-[10px] font-bold px-1.5 py-0.5 rounded border border-sky-300" title={tx.oxygen_remarks}>
+                                                                <span className="bg-sky-100 text-sky-800 text-[11px] font-bold px-1.5 py-0.5 rounded border border-sky-300" title={tx.oxygen_remarks}>
                                                                     Oxygen
                                                                 </span>
                                                             ) : null}
@@ -516,7 +589,7 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
                                                                             ? 'bg-rose-500'
                                                                             : (tx.overall_status === 'Archived'
                                                                                 ? 'bg-slate-400'
-                                                                                : 'bg-amber-500 animate-pulse'))
+                                                                                : 'bg-amber-500 animate-pulse motion-reduce:animate-none'))
                                                                 }`}></span>
                                                                 {tx.overall_status}
                                                             </span>
@@ -524,7 +597,7 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
                                                         <div className="flex flex-wrap gap-1 max-w-xs">
                                                             {tx.cleared_departments && tx.cleared_departments.length > 0 ? (
                                                                 tx.cleared_departments.map((dept, i) => (
-                                                                    <span key={i} className="bg-slate-100 text-slate-600 text-[10px] font-semibold px-1.5 py-0.5 rounded border border-slate-200">
+                                                                    <span key={i} className="bg-slate-100 text-slate-600 text-[11px] font-semibold px-1.5 py-0.5 rounded border border-slate-200">
                                                                         ✓ {dept}
                                                                     </span>
                                                                 ))
@@ -564,9 +637,11 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
                                                                 </button>
                                                             )}
                                                             <button
+                                                                type="button"
                                                                 onClick={() => handleDeletePatient(tx.id, tx.patient_name)}
                                                                 className="text-slate-400 hover:text-rose-600 p-1.5 rounded hover:bg-slate-100 transition-colors"
                                                                 title="Permanently delete record"
+                                                                aria-label={`Permanently delete ${tx.patient_name}`}
                                                             >
                                                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                                                             </button>
@@ -592,14 +667,14 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
                                                                     {(user.name || 'U').split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
                                                                 </div>
                                                                 <span className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-white ${
-                                                                    user.is_online ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'
+                                                                    user.is_online ? 'bg-emerald-500 animate-pulse motion-reduce:animate-none' : 'bg-slate-300'
                                                                 }`} title={user.is_online ? 'Online now' : 'Offline'}></span>
                                                             </div>
                                                             <div>
                                                                 <div className="font-bold text-slate-800 flex items-center space-x-2">
                                                                     <span>{user.name}</span>
                                                                     {user.department === 'ICT / Admin' && (
-                                                                        <span className="bg-purple-100 text-purple-700 text-[10px] font-bold px-1.5 py-0.2 rounded">ADMIN</span>
+                                                                        <span className="bg-purple-100 text-purple-700 text-[11px] font-bold px-1.5 py-0.5 rounded">ADMIN</span>
                                                                     )}
                                                                 </div>
                                                                 <div className="text-xs text-slate-400 font-medium">{user.email}</div>
@@ -613,13 +688,13 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
                                                         {user.is_online ? (
                                                             <div>
                                                                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse mr-1.5"></span>
+                                                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse motion-reduce:animate-none mr-1.5"></span>
                                                                     Active Now
                                                                 </span>
                                                                 <div className="text-[11px] text-slate-400 mt-1 flex items-center space-x-2">
                                                                     <span>{user.last_seen_human}</span>
                                                                     {user.last_ip_address && (
-                                                                        <span className="font-mono text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-500 border border-slate-200">
+                                                                        <span className="font-mono text-[11px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-500 border border-slate-200">
                                                                             IP: {user.last_ip_address}
                                                                         </span>
                                                                     )}
@@ -672,12 +747,15 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
             </div>
 
             {/* ADD STAFF / ADMIN MODAL */}
-            {isAddUserModalOpen && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
-                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in duration-200">
+            <Modal
+                show={isAddUserModalOpen}
+                onClose={() => setIsAddUserModalOpen(false)}
+                maxWidth="md"
+                zIndexClass="z-[100]"
+            >
                         <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
                             <h3 className="font-bold text-slate-800">Add New User / Admin</h3>
-                            <button onClick={() => setIsAddUserModalOpen(false)} className="text-slate-400 hover:text-rose-500 transition-colors">
+                            <button type="button" aria-label="Close modal" onClick={() => setIsAddUserModalOpen(false)} className="text-slate-400 hover:text-rose-500 transition-colors">
                                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                             </button>
                         </div>
@@ -722,17 +800,18 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
                                 <button type="submit" className="px-4 py-2 text-sm font-bold text-white bg-teal-600 hover:bg-teal-700 rounded-lg shadow-sm transition-colors">Create Account</button>
                             </div>
                         </form>
-                    </div>
-                </div>
-            )}
+            </Modal>
 
             {/* EDIT STAFF MODAL */}
-            {editingUser && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
-                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in duration-200">
+            <Modal
+                show={Boolean(editingUser)}
+                onClose={() => setEditingUser(null)}
+                maxWidth="md"
+                zIndexClass="z-[100]"
+            >
                         <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
                             <h3 className="font-bold text-slate-800">Edit Staff Account</h3>
-                            <button onClick={() => setEditingUser(null)} className="text-slate-400 hover:text-rose-500 transition-colors">
+                            <button type="button" aria-label="Close modal" onClick={() => setEditingUser(null)} className="text-slate-400 hover:text-rose-500 transition-colors">
                                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                             </button>
                         </div>
@@ -770,17 +849,18 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
                                 <button type="submit" className="px-4 py-2 text-sm font-bold text-white bg-teal-600 hover:bg-teal-700 rounded-lg shadow-sm transition-colors">Save Changes</button>
                             </div>
                         </form>
-                    </div>
-                </div>
-            )}
+            </Modal>
 
             {/* ADD/EDIT DEPARTMENT MODAL */}
-            {isDeptModalOpen && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
-                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in duration-200">
+            <Modal
+                show={isDeptModalOpen}
+                onClose={() => setIsDeptModalOpen(false)}
+                maxWidth="md"
+                zIndexClass="z-[100]"
+            >
                         <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
                             <h3 className="font-bold text-slate-800">{editingDept ? 'Edit Department' : 'Add New Department'}</h3>
-                            <button onClick={() => setIsDeptModalOpen(false)} className="text-slate-400 hover:text-rose-500 transition-colors">
+                            <button type="button" aria-label="Close modal" onClick={() => setIsDeptModalOpen(false)} className="text-slate-400 hover:text-rose-500 transition-colors">
                                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                             </button>
                         </div>
@@ -802,20 +882,24 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
                                 <button type="submit" className="px-4 py-2 text-sm font-bold text-white bg-teal-600 hover:bg-teal-700 rounded-lg shadow-sm transition-colors">Save Department</button>
                             </div>
                         </form>
-                    </div>
-                </div>
-            )}
+            </Modal>
 
             {/* EDIT ROUTED PATIENT MODAL */}
-            {editingPatient && (
-                <div className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 overflow-y-auto">
-                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in zoom-in duration-200 my-8">
-                        
+            <Modal
+                show={Boolean(editingPatient)}
+                onClose={() => { if (!isSavingPatient) setEditingPatient(null); }}
+                closeable={!isSavingPatient}
+                maxWidth="2xl"
+                zIndexClass="z-[150]"
+                panelClassName="rounded-2xl max-h-[90vh] flex flex-col"
+            >
+                {editingPatient && (
+                    <>
                         {/* Modal Header */}
-                        <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
+                        <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center shrink-0">
                             <div>
                                 <div className="flex items-center space-x-2">
-                                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-700 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
+                                    <span className="text-[11px] font-black uppercase tracking-wider text-amber-700 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
                                         Patient Routing Edit
                                     </span>
                                     <span className="font-mono text-xs text-slate-400">
@@ -827,15 +911,18 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
                                 </h3>
                             </div>
                             <button
+                                type="button"
+                                aria-label="Close modal"
                                 onClick={() => setEditingPatient(null)}
-                                className="text-slate-400 hover:text-rose-500 transition-colors p-1"
+                                disabled={isSavingPatient}
+                                className="text-slate-400 hover:text-rose-500 transition-colors p-1 disabled:opacity-50"
                             >
                                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                             </button>
                         </div>
 
                         {/* Modal Form */}
-                        <form onSubmit={handleUpdatePatient} className="p-6 space-y-4">
+                        <form onSubmit={handleUpdatePatient} className="p-6 space-y-4 overflow-y-auto flex-1">
                             
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
@@ -1034,18 +1121,29 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
                                 </button>
                             </div>
                         </form>
-                    </div>
-                </div>
-            )}
+                    </>
+                )}
+            </Modal>
+
+            <ConfirmDialog
+                show={Boolean(confirmState)}
+                onClose={() => setConfirmState(null)}
+                onConfirm={confirmState?.onConfirm}
+                title={confirmState?.title || 'Confirm Action'}
+                message={confirmState?.message || ''}
+                confirmLabel={confirmState?.confirmLabel || 'Confirm'}
+                tone={confirmState?.tone || 'danger'}
+                loading={isConfirmRunning}
+            />
 
             {/* SLIDING TOAST NOTIFICATION */}
             {toastMessage && (
-                <div className="fixed top-6 right-6 z-[200] flex items-center bg-teal-600 text-white px-5 py-3.5 rounded-xl shadow-2xl animate-in slide-in-from-top-5 fade-in duration-300">
+                <div className="fixed top-6 right-6 z-[200] flex items-center bg-teal-600 text-white px-5 py-3.5 rounded-xl shadow-2xl animate-slide-in-top motion-reduce:animate-none">
                     <div className="bg-teal-500 rounded-full p-1 mr-3">
                         <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
                     </div>
                     <span className="font-bold text-sm tracking-wide">{toastMessage}</span>
-                    <button onClick={() => setToastMessage(null)} className="ml-4 text-teal-200 hover:text-white transition-colors">
+                    <button type="button" aria-label="Dismiss notification" onClick={() => setToastMessage(null)} className="ml-4 text-teal-200 hover:text-white transition-colors">
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                     </button>
                 </div>

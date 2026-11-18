@@ -23,7 +23,7 @@ export default function Login({ status, canResetPassword }) {
 
     return (
        <div className="min-h-screen flex flex-col md:flex-row font-sans">
-            <Head title="Log In - RMPH Clearance" />
+            <Head title="Log In" />
 
             {/* LEFT SIDEBAR (Dark Branding Section) */}
             <div className="w-full md:w-[45%] bg-slate-900 text-white flex flex-col justify-center items-center p-8 relative overflow-hidden">
@@ -65,10 +65,7 @@ export default function Login({ status, canResetPassword }) {
                     {/* System Status Box */}
                     <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6 w-full backdrop-blur-sm">
                         <div className="flex items-center text-teal-400 font-bold mb-4 text-sm tracking-wide">
-                            <span className="relative flex h-3 w-3 mr-2">
-                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal-400 opacity-75"></span>
-                                <span className="relative inline-flex rounded-full h-3 w-3 bg-teal-500"></span>
-                            </span>
+                            <span className="inline-flex rounded-full h-2.5 w-2.5 mr-2 bg-teal-400" aria-hidden="true"></span>
                             SYSTEM ONLINE
                         </div>
                         
@@ -111,12 +108,12 @@ export default function Login({ status, canResetPassword }) {
                                 </div>
                                 <input
                                     id="email"
-                                    type="email"
+                                    type="text"
                                     name="email"
                                     value={data.email}
                                     className="block w-full pl-10 pr-3 py-3 border border-slate-200 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500 sm:text-sm font-medium transition-colors"
                                     autoComplete="username"
-                                    isFocused={true}
+                                    autoFocus
                                     onChange={(e) => setData('email', e.target.value)}
                                 />
                             </div>

@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Head, router, usePage } from '@inertiajs/react';
 import PortalLayout from '@/Layouts/PortalLayout';
+import Modal from '@/Components/Modal';
+import ConfirmDialog from '@/Components/ConfirmDialog';
 
 export default function SupervisorDashboard({ transactions = [], wards = [] }) {
     const { auth } = usePage().props;
@@ -26,6 +28,8 @@ export default function SupervisorDashboard({ transactions = [], wards = [] }) {
     });
     const [isSaving, setIsSaving] = useState(false);
     const [formErrors, setFormErrors] = useState({});
+    const [confirmState, setConfirmState] = useState(null);
+    const [isConfirmRunning, setIsConfirmRunning] = useState(false);
 
     // Real-time synchronization
     useEffect(() => {
@@ -148,8 +152,7 @@ export default function SupervisorDashboard({ transactions = [], wards = [] }) {
         });
     };
 
-    const handleSavePatient = (e) => {
-        e.preventDefault();
+    const executeSavePatient = () => {
         if (!editingPatient) return;
 
         setIsSaving(true);
@@ -164,38 +167,83 @@ export default function SupervisorDashboard({ transactions = [], wards = [] }) {
             preserveScroll: true,
             onSuccess: () => {
                 setIsSaving(false);
+                setConfirmState(null);
                 setEditingPatient(null);
                 showToast(`Patient clearance for ${patientForm.patient_name} updated successfully.`);
             },
             onError: (errs) => {
                 setIsSaving(false);
+                setConfirmState(null);
                 setFormErrors(errs);
                 showToast("Failed to update patient. Please check the form errors.");
             }
         });
     };
 
-    const handleCancelPatient = (id, name) => {
-        if (confirm(`Are you sure you want to CANCEL routing for ${name}?\n\nThis will remove the patient from cost center queues.`)) {
-            router.post(`/supervisor/transactions/${id}/cancel`, {}, {
-                preserveScroll: true,
-                onSuccess: () => showToast(`Clearance routing for ${name} has been cancelled.`)
+    const handleSavePatient = (e) => {
+        e.preventDefault();
+        if (!editingPatient) return;
+
+        const previousStatus = editingPatient.overall_status || 'Routing in Progress';
+        const nextStatus = patientForm.overall_status;
+
+        if (nextStatus !== previousStatus) {
+            setConfirmState({
+                title: 'Confirm Status Override',
+                message: `Change overall clearance status for ${patientForm.patient_name || editingPatient.patient_name} from "${previousStatus}" to "${nextStatus}"?\n\nThis overrides cost-center progression and immediately updates active queues.`,
+                confirmLabel: `Apply "${nextStatus}"`,
+                tone: nextStatus === 'Cancelled' ? 'danger' : 'warning',
+                onConfirm: () => executeSavePatient(),
             });
+            return;
         }
+
+        executeSavePatient();
+    };
+
+    const handleCancelPatient = (id, name) => {
+        setConfirmState({
+            title: 'Cancel Clearance Routing',
+            message: `Are you sure you want to CANCEL routing for ${name}?\n\nThis will remove the patient from cost center queues.`,
+            confirmLabel: 'Yes, Cancel Routing',
+            tone: 'danger',
+            onConfirm: () => {
+                setIsConfirmRunning(true);
+                router.post(`/supervisor/transactions/${id}/cancel`, {}, {
+                    preserveScroll: true,
+                    onSuccess: () => {
+                        setConfirmState(null);
+                        showToast(`Clearance routing for ${name} has been cancelled.`);
+                    },
+                    onFinish: () => setIsConfirmRunning(false),
+                });
+            },
+        });
     };
 
     const handleReactivatePatient = (id, name) => {
-        if (confirm(`Re-activate clearance routing for ${name}?`)) {
-            router.post(`/supervisor/transactions/${id}/reactivate`, {}, {
-                preserveScroll: true,
-                onSuccess: () => showToast(`Clearance routing for ${name} has been re-activated.`)
-            });
-        }
+        setConfirmState({
+            title: 'Re-activate Clearance Routing',
+            message: `Re-activate clearance routing for ${name}?`,
+            confirmLabel: 'Yes, Re-activate',
+            tone: 'teal',
+            onConfirm: () => {
+                setIsConfirmRunning(true);
+                router.post(`/supervisor/transactions/${id}/reactivate`, {}, {
+                    preserveScroll: true,
+                    onSuccess: () => {
+                        setConfirmState(null);
+                        showToast(`Clearance routing for ${name} has been re-activated.`);
+                    },
+                    onFinish: () => setIsConfirmRunning(false),
+                });
+            },
+        });
     };
 
     return (
         <PortalLayout>
-            <Head title="Clinical Supervisor Dashboard - RMPH" />
+            <Head title="Clinical Supervisor Dashboard" />
 
             <div className="flex flex-col w-full p-6 bg-slate-100 min-h-[calc(100vh-64px)] font-sans">
                 
@@ -206,10 +254,7 @@ export default function SupervisorDashboard({ transactions = [], wards = [] }) {
                             <span className="text-[11px] font-black tracking-widest text-teal-600 uppercase bg-teal-50 px-2.5 py-0.5 rounded-full border border-teal-200">
                                 Management Portal
                             </span>
-                            <span className="flex h-2 w-2 relative" title="Live Sync Active">
-                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal-400 opacity-75"></span>
-                                <span className="relative inline-flex rounded-full h-2 w-2 bg-teal-500"></span>
-                            </span>
+                            <span className="inline-flex rounded-full h-2 w-2 bg-teal-500" title="Live Sync Active" aria-hidden="true"></span>
                         </div>
                         <h1 className="text-2xl md:text-3xl font-extrabold text-slate-800 tracking-tight mt-1">
                             Clinical Supervisor Dashboard
@@ -222,19 +267,19 @@ export default function SupervisorDashboard({ transactions = [], wards = [] }) {
                     {/* KPI CARDS */}
                     <div className="flex flex-wrap items-center gap-3">
                         <div className="bg-white border border-slate-200 rounded-xl px-4 py-2.5 shadow-sm min-w-[120px]">
-                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total Routed</div>
+                            <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Total Routed</div>
                             <div className="text-xl font-black text-slate-800">{totalCount}</div>
                         </div>
                         <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 shadow-sm min-w-[120px]">
-                            <div className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">In Progress</div>
+                            <div className="text-[11px] font-bold text-amber-600 uppercase tracking-wider">In Progress</div>
                             <div className="text-xl font-black text-amber-700">{inProgressCount}</div>
                         </div>
                         <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-2.5 shadow-sm min-w-[120px]">
-                            <div className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Fully Cleared</div>
+                            <div className="text-[11px] font-bold text-emerald-600 uppercase tracking-wider">Fully Cleared</div>
                             <div className="text-xl font-black text-emerald-700">{clearedCount}</div>
                         </div>
                         <div className="bg-rose-50 border border-rose-200 rounded-xl px-4 py-2.5 shadow-sm min-w-[120px]">
-                            <div className="text-[10px] font-bold text-rose-600 uppercase tracking-wider">Cancelled</div>
+                            <div className="text-[11px] font-bold text-rose-600 uppercase tracking-wider">Cancelled</div>
                             <div className="text-xl font-black text-rose-700">{cancelledCount}</div>
                         </div>
                     </div>
@@ -262,7 +307,7 @@ export default function SupervisorDashboard({ transactions = [], wards = [] }) {
                                 }`}
                             >
                                 <span>{tab.label}</span>
-                                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                                <span className={`text-[11px] px-1.5 py-0.5 rounded-full font-mono ${
                                     activeTab === tab.id ? 'bg-teal-100 text-teal-800' : 'bg-slate-200 text-slate-600'
                                 }`}>
                                     {tab.count}
@@ -301,6 +346,8 @@ export default function SupervisorDashboard({ transactions = [], wards = [] }) {
                             />
                             {searchTerm && (
                                 <button
+                                    type="button"
+                                    aria-label="Clear search"
                                     onClick={() => setSearchTerm('')}
                                     className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600"
                                 >
@@ -350,7 +397,7 @@ export default function SupervisorDashboard({ transactions = [], wards = [] }) {
                                                         <span className="font-mono text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 text-[11px]">
                                                             Hosp #: {tx.hospital_number}
                                                         </span>
-                                                        <span className="font-mono text-slate-400 text-[10px]">
+                                                        <span className="font-mono text-slate-400 text-[11px]">
                                                             Enc: {tx.enccode}
                                                         </span>
                                                     </div>
@@ -395,7 +442,7 @@ export default function SupervisorDashboard({ transactions = [], wards = [] }) {
                                                                         ? 'bg-rose-500'
                                                                         : (tx.overall_status === 'Archived'
                                                                             ? 'bg-slate-400'
-                                                                            : 'bg-amber-500 animate-pulse'))
+                                                                            : 'bg-amber-500 animate-pulse motion-reduce:animate-none'))
                                                             }`}></span>
                                                             {tx.overall_status}
                                                         </span>
@@ -407,12 +454,12 @@ export default function SupervisorDashboard({ transactions = [], wards = [] }) {
 
                                                     <div className="flex flex-wrap gap-1 mt-1">
                                                         {tx.is_oecb ? (
-                                                            <span className="bg-amber-100 text-amber-800 text-[10px] font-black px-1.5 py-0.5 rounded border border-amber-300">
+                                                            <span className="bg-amber-100 text-amber-800 text-[11px] font-black px-1.5 py-0.5 rounded border border-amber-300">
                                                                 OECB
                                                             </span>
                                                         ) : null}
                                                         {tx.has_oxygen ? (
-                                                            <span className="bg-sky-100 text-sky-800 text-[10px] font-bold px-1.5 py-0.5 rounded border border-sky-300" title={tx.oxygen_remarks}>
+                                                            <span className="bg-sky-100 text-sky-800 text-[11px] font-bold px-1.5 py-0.5 rounded border border-sky-300" title={tx.oxygen_remarks}>
                                                                 Oxygen {tx.oxygen_remarks ? `("${tx.oxygen_remarks}")` : ''}
                                                             </span>
                                                         ) : null}
@@ -438,7 +485,7 @@ export default function SupervisorDashboard({ transactions = [], wards = [] }) {
                                                             return (
                                                                 <span
                                                                     key={i}
-                                                                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded border transition-colors ${
+                                                                    className={`text-[11px] font-bold px-1.5 py-0.5 rounded border transition-colors ${
                                                                         isCleared
                                                                             ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
                                                                             : 'bg-slate-100 text-slate-500 border-slate-200'
@@ -510,15 +557,21 @@ export default function SupervisorDashboard({ transactions = [], wards = [] }) {
             </div>
 
             {/* SUPERVISOR EDIT PATIENT MODAL */}
-            {editingPatient && (
-                <div className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 overflow-y-auto">
-                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in zoom-in duration-200 my-8">
-                        
+            <Modal
+                show={Boolean(editingPatient)}
+                onClose={() => { if (!isSaving) setEditingPatient(null); }}
+                closeable={!isSaving}
+                maxWidth="2xl"
+                zIndexClass="z-[200]"
+                panelClassName="rounded-2xl max-h-[90vh] flex flex-col"
+            >
+                {editingPatient && (
+                    <>
                         {/* Modal Header */}
-                        <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
+                        <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center shrink-0">
                             <div>
                                 <div className="flex items-center space-x-2">
-                                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-700 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
+                                    <span className="text-[11px] font-black uppercase tracking-wider text-amber-700 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
                                         Supervisor Edit
                                     </span>
                                     <span className="font-mono text-xs text-slate-400">
@@ -530,15 +583,18 @@ export default function SupervisorDashboard({ transactions = [], wards = [] }) {
                                 </h3>
                             </div>
                             <button
+                                type="button"
+                                aria-label="Close modal"
                                 onClick={() => setEditingPatient(null)}
-                                className="text-slate-400 hover:text-rose-500 transition-colors p-1"
+                                disabled={isSaving}
+                                className="text-slate-400 hover:text-rose-500 transition-colors p-1 disabled:opacity-50"
                             >
                                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                             </button>
                         </div>
 
                         {/* Modal Form */}
-                        <form onSubmit={handleSavePatient} className="p-6 space-y-4">
+                        <form onSubmit={handleSavePatient} className="p-6 space-y-4 overflow-y-auto flex-1">
                             
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 {/* Patient Name */}
@@ -588,7 +644,7 @@ export default function SupervisorDashboard({ transactions = [], wards = [] }) {
                                             <option key={idx} value={w}>{w}</option>
                                         ))}
                                     </select>
-                                    <p className="text-[10px] text-slate-400 mt-1">
+                                    <p className="text-[11px] text-slate-400 mt-1">
                                         Changing ward dynamically recalculates required clearance stations.
                                     </p>
                                 </div>
@@ -644,7 +700,7 @@ export default function SupervisorDashboard({ transactions = [], wards = [] }) {
                                         <option value="Cancelled">Cancelled</option>
                                         <option value="Archived">Archived</option>
                                     </select>
-                                    <p className="text-[10px] text-slate-400 mt-1">
+                                    <p className="text-[11px] text-slate-400 mt-1">
                                         Setting to Cancelled removes patient from cost center queues.
                                     </p>
                                 </div>
@@ -752,18 +808,29 @@ export default function SupervisorDashboard({ transactions = [], wards = [] }) {
                                 </button>
                             </div>
                         </form>
-                    </div>
-                </div>
-            )}
+                    </>
+                )}
+            </Modal>
+
+            <ConfirmDialog
+                show={Boolean(confirmState)}
+                onClose={() => setConfirmState(null)}
+                onConfirm={confirmState?.onConfirm}
+                title={confirmState?.title || 'Confirm Action'}
+                message={confirmState?.message || ''}
+                confirmLabel={confirmState?.confirmLabel || 'Confirm'}
+                tone={confirmState?.tone || 'danger'}
+                loading={isSaving || isConfirmRunning}
+            />
 
             {/* TOAST NOTIFICATION */}
             {toastMessage && (
-                <div className="fixed top-6 right-6 z-[300] flex items-center bg-slate-900 text-white px-5 py-3.5 rounded-xl shadow-2xl border border-slate-700 animate-in slide-in-from-top-5 fade-in duration-300">
+                <div className="fixed top-6 right-6 z-[300] flex items-center bg-slate-900 text-white px-5 py-3.5 rounded-xl shadow-2xl border border-slate-700 animate-slide-in-top motion-reduce:animate-none">
                     <div className="bg-teal-500 rounded-full p-1 mr-3">
                         <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
                     </div>
                     <span className="font-bold text-sm tracking-wide">{toastMessage}</span>
-                    <button onClick={() => setToastMessage(null)} className="ml-4 text-slate-400 hover:text-white transition-colors">
+                    <button type="button" aria-label="Dismiss notification" onClick={() => setToastMessage(null)} className="ml-4 text-slate-400 hover:text-white transition-colors">
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                     </button>
                 </div>

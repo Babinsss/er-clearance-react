@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import axios from 'axios';
+import Modal from '@/Components/Modal';
+import ConfirmDialog from '@/Components/ConfirmDialog';
 
 export default function CreditReportsModule({ onBackToMasterlist }) {
     const [loading, setLoading] = useState(true);
@@ -14,6 +16,8 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
 
     // Available Years
     const yearsList = ['All', '2026', '2025', '2024', '2023'];
+    const [pendingDeleteGrantor, setPendingDeleteGrantor] = useState(null);
+    const [isDeletingSaa, setIsDeletingSaa] = useState(false);
 
     // Months Definition
     const monthsList = [
@@ -204,15 +208,24 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
         }
     };
 
-    const handleDeleteSaa = async (grantor) => {
-        if (!confirm(`Are you sure you want to delete SAA fund record for "${grantor.proponent}"?`)) return;
+    const handleDeleteSaa = (grantor) => {
+        setPendingDeleteGrantor(grantor);
+    };
+
+    const executeDeleteSaa = async () => {
+        if (!pendingDeleteGrantor) return;
+        const grantor = pendingDeleteGrantor;
+        setIsDeletingSaa(true);
         try {
             await axios.delete(`/credit-promissory/grantors/${grantor.id}`);
             showToast(`SAA allotment for ${grantor.proponent} removed.`);
+            setPendingDeleteGrantor(null);
             fetchReports();
         } catch (err) {
             console.error('Failed to delete SAA fund:', err);
             showToast('Failed to delete SAA fund record.', 'error');
+        } finally {
+            setIsDeletingSaa(false);
         }
     };
 
@@ -438,7 +451,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                 <div className="text-[11px] font-serif uppercase tracking-wider text-slate-600 leading-tight">Province of Capiz</div>
                 <div className="text-base font-serif font-black uppercase text-slate-900 tracking-wide mt-1">ROXAS MEMORIAL PROVINCIAL HOSPITAL</div>
                 <div className="text-xs font-semibold text-teal-800">CREDIT AND COLLECTION SECTION — FINANCIAL ASSISTANCE UNIT</div>
-                <div className="text-[10px] text-slate-500">Arnaldo Boulevard, Roxas City, Capiz • Tel. (036) 621-0035</div>
+                <div className="text-[11px] text-slate-500">Arnaldo Boulevard, Roxas City, Capiz • Tel. (036) 621-0035</div>
                 
                 <div className="mt-3 pt-2 border-t border-slate-300 flex justify-between items-center text-xs">
                     <span className="font-bold uppercase text-slate-800">
@@ -448,7 +461,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                         {activeTab === 'nbb_summary' && `PATIENT REGISTRY & DISBURSEMENT LEDGER: NO BALANCE BILLING (NBB) & NON-NBB (PERIOD: ${nbbMonth !== 'All' ? (monthsList.find(m => m.num === nbbMonth)?.name || nbbMonth) : 'ALL MONTHS'} • YEAR: ${nbbYear !== 'All' ? nbbYear : 'ALL RECORDED YEARS'} | PROGRAM: ${nbbProgram.toUpperCase()})`}
                         {activeTab === 'delinquents' && 'SCHEDULE OF OUTSTANDING DELINQUENT PROMISSORY NOTES'}
                     </span>
-                    <span className="text-[10px] text-slate-600 font-mono">
+                    <span className="text-[11px] text-slate-600 font-mono">
                         Date Generated: {new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                     </span>
                 </div>
@@ -458,43 +471,43 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
             {data && data.kpis && (
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-3 print:grid-cols-5 print:gap-2">
                     <div className="bg-gradient-to-br from-teal-50 to-teal-100/50 p-3.5 rounded-xl border border-teal-200">
-                        <span className="text-[10px] uppercase font-bold text-teal-700 tracking-wider block">SAA Approved Budget</span>
+                        <span className="text-[11px] uppercase font-bold text-teal-700 tracking-wider block">SAA Approved Budget</span>
                         <div className="text-base sm:text-lg font-black text-teal-900 mt-0.5 font-mono">
                             {fmt(data.kpis.total_grantor_budget)}
                         </div>
-                        <span className="text-[10px] text-teal-600 mt-1 block">80 Verified Proponents</span>
+                        <span className="text-[11px] text-teal-600 mt-1 block">80 Verified Proponents</span>
                     </div>
 
                     <div className="bg-gradient-to-br from-blue-50 to-blue-100/50 p-3.5 rounded-xl border border-blue-200">
-                        <span className="text-[10px] uppercase font-bold text-blue-700 tracking-wider block">F/A Disbursed to Date</span>
+                        <span className="text-[11px] uppercase font-bold text-blue-700 tracking-wider block">F/A Disbursed to Date</span>
                         <div className="text-base sm:text-lg font-black text-blue-900 mt-0.5 font-mono">
                             {fmt(data.kpis.total_fa_disbursed)}
                         </div>
-                        <span className="text-[10px] text-blue-600 mt-1 block">{fmtNum(data.kpis.total_notes)} Total Records</span>
+                        <span className="text-[11px] text-blue-600 mt-1 block">{fmtNum(data.kpis.total_notes)} Total Records</span>
                     </div>
 
                     <div className="bg-gradient-to-br from-amber-50 to-amber-100/50 p-3.5 rounded-xl border border-amber-200">
-                        <span className="text-[10px] uppercase font-bold text-amber-700 tracking-wider block">Promissory Notes (PN)</span>
+                        <span className="text-[11px] uppercase font-bold text-amber-700 tracking-wider block">Promissory Notes (PN)</span>
                         <div className="text-base sm:text-lg font-black text-amber-900 mt-0.5 font-mono">
                             {fmt(data.kpis.total_pn_amount)}
                         </div>
-                        <span className="text-[10px] text-amber-600 mt-1 block">{fmtNum(data.kpis.pn_count)} Active PNs</span>
+                        <span className="text-[11px] text-amber-600 mt-1 block">{fmtNum(data.kpis.pn_count)} Active PNs</span>
                     </div>
 
                     <div className="bg-gradient-to-br from-rose-50 to-rose-100/50 p-3.5 rounded-xl border border-rose-200">
-                        <span className="text-[10px] uppercase font-bold text-rose-700 tracking-wider block">Remaining Receivables</span>
+                        <span className="text-[11px] uppercase font-bold text-rose-700 tracking-wider block">Remaining Receivables</span>
                         <div className="text-base sm:text-lg font-black text-rose-900 mt-0.5 font-mono">
                             {fmt(data.kpis.total_receivable_balance)}
                         </div>
-                        <span className="text-[10px] text-rose-600 mt-1 block">Credit & Collection AR</span>
+                        <span className="text-[11px] text-rose-600 mt-1 block">Credit & Collection AR</span>
                     </div>
 
                     <div className="bg-gradient-to-br from-emerald-50 to-emerald-100/50 p-3.5 rounded-xl border border-emerald-200">
-                        <span className="text-[10px] uppercase font-bold text-emerald-700 tracking-wider block">Total Cash Collected</span>
+                        <span className="text-[11px] uppercase font-bold text-emerald-700 tracking-wider block">Total Cash Collected</span>
                         <div className="text-base sm:text-lg font-black text-emerald-900 mt-0.5 font-mono">
                             {fmt(data.kpis.total_cash_collected)}
                         </div>
-                        <span className="text-[10px] text-emerald-600 mt-1 block">Direct Cash Receipts</span>
+                        <span className="text-[11px] text-emerald-600 mt-1 block">Direct Cash Receipts</span>
                     </div>
                 </div>
             )}
@@ -524,7 +537,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
                     <span className="flex items-center space-x-1.5">
                         <span>Individual Sponsor Patient Ledgers (74+ Proponents)</span>
-                        <span className="px-1.5 py-0.2 text-[9px] font-black uppercase rounded bg-teal-200 text-teal-900">
+                        <span className="px-1.5 py-0.5 text-[11px] font-black uppercase rounded bg-teal-200 text-teal-900">
                             By Month & Year
                         </span>
                     </span>
@@ -553,7 +566,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                     <span className="flex items-center space-x-1.5">
                         <span>NBB vs Non-NBB Programs</span>
-                        <span className="px-1.5 py-0.2 text-[9px] font-black uppercase rounded bg-purple-200 text-purple-900">
+                        <span className="px-1.5 py-0.5 text-[11px] font-black uppercase rounded bg-purple-200 text-purple-900">
                             By Patient & Month
                         </span>
                     </span>
@@ -588,7 +601,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                     {/* Filter and Action Bar */}
                     <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex flex-wrap justify-between items-center gap-3 print:hidden">
                         <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-[10px] font-bold uppercase text-slate-500">Category:</span>
+                            <span className="text-[11px] font-bold uppercase text-slate-500">Category:</span>
                             {['All', 'Senate', 'Congressional', 'Party List', 'LGU / Mayor', 'Provincial Official', 'Agency / Program'].map(cat => (
                                 <button
                                     key={cat}
@@ -630,7 +643,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                     <div className="overflow-x-auto bg-white rounded-xl border border-slate-200 shadow-sm print:border-slate-400 print:shadow-none">
                         <table className="w-full text-left border-collapse">
                             <thead>
-                                <tr className="bg-slate-100 text-slate-700 text-[10px] uppercase font-black tracking-wider border-b border-slate-200 print:bg-slate-200 print:text-black">
+                                <tr className="bg-slate-100 text-slate-700 text-[11px] uppercase font-black tracking-wider border-b border-slate-200 print:bg-slate-200 print:text-black">
                                     <th className="py-2.5 px-3">Code</th>
                                     <th className="py-2.5 px-3">Sponsor / Proponent Name</th>
                                     <th className="py-2.5 px-3">Category</th>
@@ -671,11 +684,11 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                                                     {g.proponent}
                                                 </button>
                                                 {g.remarks && (
-                                                    <span className="block text-[10px] text-slate-400 font-normal">{g.remarks}</span>
+                                                    <span className="block text-[11px] text-slate-400 font-normal">{g.remarks}</span>
                                                 )}
                                             </td>
                                             <td className="py-2 px-3">
-                                                <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-700">
+                                                <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-700">
                                                     {g.category}
                                                 </span>
                                             </td>
@@ -706,7 +719,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                                             <td className="py-2 px-3 text-center">
                                                 {g.allocated_budget > 0 ? (
                                                     <div className="w-20 mx-auto">
-                                                        <div className="flex justify-between text-[10px] font-bold text-slate-500 mb-0.5">
+                                                        <div className="flex justify-between text-[11px] font-bold text-slate-500 mb-0.5">
                                                             <span>{g.utilization_rate}%</span>
                                                         </div>
                                                         <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
@@ -723,7 +736,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                                                         </div>
                                                     </div>
                                                 ) : (
-                                                    <span className="text-[10px] text-slate-400 font-mono">100% Active</span>
+                                                    <span className="text-[11px] text-slate-400 font-mono">100% Active</span>
                                                 )}
                                             </td>
                                             <td className="py-2 px-3 text-center font-bold text-slate-800">
@@ -739,16 +752,20 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                                                         Patients
                                                     </button>
                                                     <button
+                                                        type="button"
                                                         onClick={() => handleOpenEditSaa(g)}
                                                         className="p-1 hover:bg-slate-100 text-slate-500 hover:text-slate-800 rounded transition-colors"
                                                         title="Edit SAA Budget Allotment"
+                                                        aria-label={`Edit ${g.proponent} SAA budget allotment`}
                                                     >
                                                         <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
                                                     </button>
                                                     <button
+                                                        type="button"
                                                         onClick={() => handleDeleteSaa(g)}
                                                         className="p-1 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded transition-colors"
                                                         title="Delete SAA Allotment"
+                                                        aria-label={`Delete ${g.proponent} SAA allotment`}
                                                     >
                                                         <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                                                     </button>
@@ -770,7 +787,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                     <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 flex flex-wrap gap-3 items-end print:hidden">
                         {/* Grantor Dropdown Selector */}
                         <div className="flex-1 min-w-[280px]">
-                            <label className="block text-[10px] font-black uppercase text-teal-800 tracking-wider mb-1">
+                            <label className="block text-[11px] font-black uppercase text-teal-800 tracking-wider mb-1">
                                 Select Individual Sponsor / Grantor ({data?.saa_grantors?.length || 80} Proponents):
                             </label>
                             <select
@@ -791,7 +808,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
 
                         {/* Year Selector */}
                         <div className="w-full sm:w-36">
-                            <label className="block text-[10px] font-black uppercase text-teal-800 tracking-wider mb-1 flex items-center space-x-1">
+                            <label className="block text-[11px] font-black uppercase text-teal-800 tracking-wider mb-1 flex items-center space-x-1">
                                 <svg className="w-3 h-3 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
                                 <span>Filter by Year:</span>
                             </label>
@@ -813,7 +830,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
 
                         {/* Month Selector */}
                         <div className="w-full sm:w-44">
-                            <label className="block text-[10px] font-black uppercase text-teal-800 tracking-wider mb-1">
+                            <label className="block text-[11px] font-black uppercase text-teal-800 tracking-wider mb-1">
                                 Option: Filter by Month:
                             </label>
                             <select
@@ -834,7 +851,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
 
                         {/* Search Patient */}
                         <div className="w-full sm:w-56">
-                            <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
+                            <label className="block text-[11px] font-black uppercase text-slate-600 mb-1">
                                 Search Patient / Address:
                             </label>
                             <div className="relative">
@@ -885,22 +902,22 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                                 <div className="flex flex-wrap items-center gap-3 text-right">
                                     {ledgerData.grantor.allocated_budget > 0 && (
                                         <div className="bg-white/10 px-3 py-2 rounded-xl backdrop-blur-sm print:border">
-                                            <span className="text-[10px] text-teal-200 uppercase font-bold block print:text-black">SAA Budget</span>
+                                            <span className="text-[11px] text-teal-200 uppercase font-bold block print:text-black">SAA Budget</span>
                                             <span className="text-sm font-bold text-white print:text-black">{fmt(ledgerData.grantor.allocated_budget)}</span>
                                         </div>
                                     )}
                                     <div className="bg-white/10 px-3 py-2 rounded-xl backdrop-blur-sm print:border">
-                                        <span className="text-[10px] text-teal-200 uppercase font-bold block print:text-black">Total Disbursed</span>
+                                        <span className="text-[11px] text-teal-200 uppercase font-bold block print:text-black">Total Disbursed</span>
                                         <span className="text-sm font-bold text-teal-300 print:text-black">{fmt(ledgerData.grantor.utilized_budget)}</span>
                                     </div>
                                     {ledgerData.grantor.allocated_budget > 0 && (
                                         <div className="bg-white/10 px-3 py-2 rounded-xl backdrop-blur-sm print:border">
-                                            <span className="text-[10px] text-teal-200 uppercase font-bold block print:text-black">Remaining Fund</span>
+                                            <span className="text-[11px] text-teal-200 uppercase font-bold block print:text-black">Remaining Fund</span>
                                             <span className="text-sm font-bold text-emerald-300 print:text-black">{fmt(ledgerData.grantor.remaining_balance)}</span>
                                         </div>
                                     )}
                                     <div className="bg-white/10 px-3 py-2 rounded-xl backdrop-blur-sm print:border">
-                                        <span className="text-[10px] text-teal-200 uppercase font-bold block print:text-black">All-Time Patients</span>
+                                        <span className="text-[11px] text-teal-200 uppercase font-bold block print:text-black">All-Time Patients</span>
                                         <span className="text-sm font-bold text-white print:text-black">{fmtNum(ledgerData.grantor.total_patients)}</span>
                                     </div>
                                 </div>
@@ -914,7 +931,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                             <span className="text-[11px] font-black uppercase text-slate-700 tracking-wider flex items-center space-x-1.5">
                                 <span>📅 Monthly Assistance Breakdown — Year: {filterYear !== 'All' ? filterYear : 'All Recorded Years'}</span>
                             </span>
-                            <span className="text-[10px] text-slate-500">
+                            <span className="text-[11px] text-slate-500">
                                 {filterYear !== 'All' ? `Displaying data for Year ${filterYear}` : 'Displaying aggregated data across all years'} • Click any month to filter
                             </span>
                         </div>
@@ -942,11 +959,11 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                                         }`}
                                     >
                                         <div className="text-[11px] font-black truncate">{m.short || m.name}</div>
-                                        <div className={`text-[10px] font-mono font-bold mt-0.5 ${isSelected ? 'text-teal-100' : count > 0 ? 'text-teal-700' : 'text-slate-400'}`}>
+                                        <div className={`text-[11px] font-mono font-bold mt-0.5 ${isSelected ? 'text-teal-100' : count > 0 ? 'text-teal-700' : 'text-slate-400'}`}>
                                             {fmtNum(count)} pts
                                         </div>
                                         {count > 0 && (
-                                            <div className={`text-[9px] font-mono truncate ${isSelected ? 'text-teal-200' : 'text-slate-500'}`}>
+                                            <div className={`text-[11px] font-mono truncate ${isSelected ? 'text-teal-200' : 'text-slate-500'}`}>
                                                 {fmt(fa)}
                                             </div>
                                         )}
@@ -992,7 +1009,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                     <div className="overflow-x-auto bg-white rounded-xl border border-slate-200 shadow-sm print:border-slate-400 print:shadow-none">
                         <table className="w-full text-left border-collapse">
                             <thead>
-                                <tr className="bg-slate-100 text-slate-700 text-[10px] uppercase font-black tracking-wider border-b border-slate-200 print:bg-slate-200 print:text-black">
+                                <tr className="bg-slate-100 text-slate-700 text-[11px] uppercase font-black tracking-wider border-b border-slate-200 print:bg-slate-200 print:text-black">
                                     <th className="py-2.5 px-3">#</th>
                                     <th className="py-2.5 px-3">Patient Full Name</th>
                                     <th className="py-2.5 px-3">Date</th>
@@ -1030,7 +1047,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                                             <td className="py-2 px-3 font-bold text-slate-900">
                                                 {p.patient_name}
                                                 {p.case_number && (
-                                                    <span className="block text-[10px] text-slate-400 font-mono">{p.case_number}</span>
+                                                    <span className="block text-[11px] text-slate-400 font-mono">{p.case_number}</span>
                                                 )}
                                             </td>
                                             <td className="py-2 px-3 text-slate-600 font-mono text-[11px] whitespace-nowrap">
@@ -1055,7 +1072,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                                             <td className="py-2 px-3 text-slate-600 text-[11px] max-w-xs truncate" title={p.address}>
                                                 {p.address || '—'}
                                             </td>
-                                            <td className="py-2 px-3 text-slate-500 text-[10px]">
+                                            <td className="py-2 px-3 text-slate-500 text-[11px]">
                                                 <span className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200">
                                                     {p.sheet_category || 'General'}
                                                 </span>
@@ -1146,7 +1163,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                     <div className="overflow-x-auto bg-white rounded-xl border border-slate-200 shadow-sm print:border-slate-400 print:shadow-none">
                         <table className="w-full text-left border-collapse">
                             <thead>
-                                <tr className="bg-slate-100 text-slate-700 text-[10px] uppercase font-black tracking-wider border-b border-slate-200 print:bg-slate-200 print:text-black">
+                                <tr className="bg-slate-100 text-slate-700 text-[11px] uppercase font-black tracking-wider border-b border-slate-200 print:bg-slate-200 print:text-black">
                                     <th className="py-2.5 px-3">Department / Sheet Category</th>
                                     <th className="py-2.5 px-3 text-center">Patient Count</th>
                                     <th className="py-2.5 px-3 text-right">Hospital Bills</th>
@@ -1199,7 +1216,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                     <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 flex flex-wrap gap-3 items-end print:hidden">
                         {/* Program Classification Filter */}
                         <div className="w-full sm:w-60">
-                            <label className="block text-[10px] font-black uppercase text-purple-800 tracking-wider mb-1">
+                            <label className="block text-[11px] font-black uppercase text-purple-800 tracking-wider mb-1">
                                 Program / Classification:
                             </label>
                             <select
@@ -1219,7 +1236,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
 
                         {/* Year Selector */}
                         <div className="w-full sm:w-36">
-                            <label className="block text-[10px] font-black uppercase text-purple-800 tracking-wider mb-1 flex items-center space-x-1">
+                            <label className="block text-[11px] font-black uppercase text-purple-800 tracking-wider mb-1 flex items-center space-x-1">
                                 <svg className="w-3 h-3 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
                                 <span>Filter by Year:</span>
                             </label>
@@ -1241,7 +1258,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
 
                         {/* Month Selector */}
                         <div className="w-full sm:w-44">
-                            <label className="block text-[10px] font-black uppercase text-purple-800 tracking-wider mb-1">
+                            <label className="block text-[11px] font-black uppercase text-purple-800 tracking-wider mb-1">
                                 Option: Filter by Month:
                             </label>
                             <select
@@ -1262,7 +1279,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
 
                         {/* Search Patient */}
                         <div className="flex-1 min-w-[200px]">
-                            <label className="block text-[10px] font-black uppercase text-slate-600 mb-1">
+                            <label className="block text-[11px] font-black uppercase text-slate-600 mb-1">
                                 Search Patient / Case # / Address:
                             </label>
                             <div className="relative">
@@ -1284,9 +1301,11 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                     {/* Interactive Program Metric Cards (Clickable to switch view) */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         {/* NBB Card */}
-                        <div
+                        <button
+                            type="button"
                             onClick={() => { setNbbProgram('nbb'); setNbbPage(1); }}
-                            className={`p-4 rounded-xl border cursor-pointer transition-all ${
+                            aria-pressed={nbbProgram === 'nbb'}
+                            className={`w-full text-left p-4 rounded-xl border cursor-pointer transition-all ${
                                 nbbProgram === 'nbb'
                                     ? 'bg-teal-50 border-teal-500 shadow-md ring-2 ring-teal-400/50'
                                     : 'bg-teal-50/50 hover:bg-teal-50 border-teal-200'
@@ -1295,7 +1314,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                             <div className="flex justify-between items-center">
                                 <span className="text-xs font-black uppercase text-teal-800 flex items-center space-x-1.5">
                                     <span>No Balance Billing (NBB)</span>
-                                    {nbbProgram === 'nbb' && <span className="text-[10px] bg-teal-600 text-white px-1.5 py-0.2 rounded font-bold">ACTIVE</span>}
+                                    {nbbProgram === 'nbb' && <span className="text-[11px] bg-teal-600 text-white px-1.5 py-0.5 rounded font-bold">ACTIVE</span>}
                                 </span>
                                 <span className="px-2 py-0.5 bg-teal-200 text-teal-900 rounded text-[11px] font-bold">
                                     {fmtNum(nbbData?.program_stats?.nbb_count ?? data?.nbb_stats?.nbb_count ?? 0)} Patients
@@ -1321,12 +1340,14 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                                     </span>
                                 </div>
                             </div>
-                        </div>
+                        </button>
 
                         {/* Non-NBB Card */}
-                        <div
+                        <button
+                            type="button"
                             onClick={() => { setNbbProgram('non_nbb'); setNbbPage(1); }}
-                            className={`p-4 rounded-xl border cursor-pointer transition-all ${
+                            aria-pressed={nbbProgram === 'non_nbb'}
+                            className={`w-full text-left p-4 rounded-xl border cursor-pointer transition-all ${
                                 nbbProgram === 'non_nbb'
                                     ? 'bg-purple-50 border-purple-500 shadow-md ring-2 ring-purple-400/50'
                                     : 'bg-purple-50/50 hover:bg-purple-50 border-purple-200'
@@ -1335,7 +1356,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                             <div className="flex justify-between items-center">
                                 <span className="text-xs font-black uppercase text-purple-800 flex items-center space-x-1.5">
                                     <span>Non-NBB Accounts</span>
-                                    {nbbProgram === 'non_nbb' && <span className="text-[10px] bg-purple-600 text-white px-1.5 py-0.2 rounded font-bold">ACTIVE</span>}
+                                    {nbbProgram === 'non_nbb' && <span className="text-[11px] bg-purple-600 text-white px-1.5 py-0.5 rounded font-bold">ACTIVE</span>}
                                 </span>
                                 <span className="px-2 py-0.5 bg-purple-200 text-purple-900 rounded text-[11px] font-bold">
                                     {fmtNum(nbbData?.program_stats?.non_nbb_count ?? data?.nbb_stats?.non_nbb_count ?? 0)} Patients
@@ -1361,12 +1382,14 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                                     </span>
                                 </div>
                             </div>
-                        </div>
+                        </button>
 
                         {/* VAWC / Special ER Card */}
-                        <div
+                        <button
+                            type="button"
                             onClick={() => { setNbbProgram('vawc'); setNbbPage(1); }}
-                            className={`p-4 rounded-xl border cursor-pointer transition-all ${
+                            aria-pressed={nbbProgram === 'vawc'}
+                            className={`w-full text-left p-4 rounded-xl border cursor-pointer transition-all ${
                                 nbbProgram === 'vawc'
                                     ? 'bg-indigo-50 border-indigo-500 shadow-md ring-2 ring-indigo-400/50'
                                     : 'bg-indigo-50/50 hover:bg-indigo-50 border-indigo-200'
@@ -1375,7 +1398,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                             <div className="flex justify-between items-center">
                                 <span className="text-xs font-black uppercase text-indigo-800 flex items-center space-x-1.5">
                                     <span>VAWC / Special ER</span>
-                                    {nbbProgram === 'vawc' && <span className="text-[10px] bg-indigo-600 text-white px-1.5 py-0.2 rounded font-bold">ACTIVE</span>}
+                                    {nbbProgram === 'vawc' && <span className="text-[11px] bg-indigo-600 text-white px-1.5 py-0.5 rounded font-bold">ACTIVE</span>}
                                 </span>
                                 <span className="px-2 py-0.5 bg-indigo-200 text-indigo-900 rounded text-[11px] font-bold">
                                     {fmtNum(nbbData?.program_stats?.vawc_count ?? data?.nbb_stats?.vawc_count ?? 0)} Patients
@@ -1401,7 +1424,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                                     </span>
                                 </div>
                             </div>
-                        </div>
+                        </button>
                     </div>
 
                     {/* Interactive 12-Month Distribution Strip */}
@@ -1410,7 +1433,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                             <span className="text-[11px] font-black uppercase text-slate-700 tracking-wider flex items-center space-x-1.5">
                                 <span>📅 Monthly Assistance Breakdown — Year: {nbbYear !== 'All' ? nbbYear : 'All Recorded Years'} ({nbbProgram === 'all' ? 'All Programs' : nbbProgram === 'nbb' ? 'NBB Accounts' : nbbProgram === 'non_nbb' ? 'Non-NBB Accounts' : 'VAWC/ER'})</span>
                             </span>
-                            <span className="text-[10px] text-slate-500">
+                            <span className="text-[11px] text-slate-500">
                                 {nbbYear !== 'All' ? `Showing data for Year ${nbbYear}` : 'Showing all years'} • Click month to filter
                             </span>
                         </div>
@@ -1438,11 +1461,11 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                                         }`}
                                     >
                                         <div className="text-[11px] font-black truncate">{m.short || m.name}</div>
-                                        <div className={`text-[10px] font-mono font-bold mt-0.5 ${isSelected ? 'text-purple-100' : count > 0 ? 'text-purple-700' : 'text-slate-400'}`}>
+                                        <div className={`text-[11px] font-mono font-bold mt-0.5 ${isSelected ? 'text-purple-100' : count > 0 ? 'text-purple-700' : 'text-slate-400'}`}>
                                             {fmtNum(count)} pts
                                         </div>
                                         {count > 0 && (
-                                            <div className={`text-[9px] font-mono truncate ${isSelected ? 'text-purple-200' : 'text-slate-500'}`}>
+                                            <div className={`text-[11px] font-mono truncate ${isSelected ? 'text-purple-200' : 'text-slate-500'}`}>
                                                 {fmt(fa)}
                                             </div>
                                         )}
@@ -1495,7 +1518,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                     <div className="overflow-x-auto bg-white rounded-xl border border-slate-200 shadow-sm print:border-slate-400 print:shadow-none">
                         <table className="w-full text-left border-collapse">
                             <thead>
-                                <tr className="bg-slate-100 text-slate-700 text-[10px] uppercase font-black tracking-wider border-b border-slate-200 print:bg-slate-200 print:text-black">
+                                <tr className="bg-slate-100 text-slate-700 text-[11px] uppercase font-black tracking-wider border-b border-slate-200 print:bg-slate-200 print:text-black">
                                     <th className="py-2.5 px-3">#</th>
                                     <th className="py-2.5 px-3">Patient Full Name</th>
                                     <th className="py-2.5 px-3">Entry Date</th>
@@ -1534,7 +1557,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                                             <td className="py-2 px-3 font-bold text-slate-900">
                                                 {p.patient_name}
                                                 {p.case_number && (
-                                                    <span className="block text-[10px] text-slate-400 font-mono">{p.case_number}</span>
+                                                    <span className="block text-[11px] text-slate-400 font-mono">{p.case_number}</span>
                                                 )}
                                             </td>
                                             <td className="py-2 px-3 text-slate-600 font-mono text-[11px] whitespace-nowrap">
@@ -1542,19 +1565,19 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                                             </td>
                                             <td className="py-2 px-3 text-center">
                                                 {p.is_nbb ? (
-                                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-100 text-teal-800 border border-teal-200">
+                                                    <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-teal-100 text-teal-800 border border-teal-200">
                                                         NBB
                                                     </span>
                                                 ) : p.is_non_nbb ? (
-                                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
+                                                    <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
                                                         Non-NBB
                                                     </span>
                                                 ) : p.is_vawc_er ? (
-                                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-100 text-indigo-800 border border-indigo-200">
+                                                    <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-indigo-100 text-indigo-800 border border-indigo-200">
                                                         VAWC/ER
                                                     </span>
                                                 ) : (
-                                                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-600">
+                                                    <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-600">
                                                         Standard
                                                     </span>
                                                 )}
@@ -1567,7 +1590,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                                             </td>
                                             <td className="py-2 px-3 text-xs text-slate-700 max-w-[140px] truncate" title={p.fa_grantor}>
                                                 {p.fa_grantor ? (
-                                                    <span className="px-1.5 py-0.5 bg-slate-100 text-slate-800 rounded font-semibold text-[10px]">
+                                                    <span className="px-1.5 py-0.5 bg-slate-100 text-slate-800 rounded font-semibold text-[11px]">
                                                         {p.fa_grantor}
                                                     </span>
                                                 ) : '—'}
@@ -1576,7 +1599,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                                                 {p.cash_paid > 0 ? (
                                                     <div>
                                                         <span>{fmt(p.cash_paid)}</span>
-                                                        {p.or_number && <span className="block text-[9px] text-slate-400 font-mono">OR:{p.or_number}</span>}
+                                                        {p.or_number && <span className="block text-[11px] text-slate-400 font-mono">OR:{p.or_number}</span>}
                                                     </div>
                                                 ) : '—'}
                                             </td>
@@ -1590,7 +1613,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                                             <td className="py-2 px-3 text-slate-600 text-[11px] max-w-xs truncate" title={p.address}>
                                                 {p.address || '—'}
                                             </td>
-                                            <td className="py-2 px-3 text-slate-500 text-[10px]">
+                                            <td className="py-2 px-3 text-slate-500 text-[11px]">
                                                 <span className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200">
                                                     {p.sheet_category || 'General'}
                                                 </span>
@@ -1679,7 +1702,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                     <div className="overflow-x-auto bg-white rounded-xl border border-slate-200 shadow-sm print:border-slate-400 print:shadow-none">
                         <table className="w-full text-left border-collapse">
                             <thead>
-                                <tr className="bg-slate-100 text-slate-700 text-[10px] uppercase font-black tracking-wider border-b border-slate-200 print:bg-slate-200 print:text-black">
+                                <tr className="bg-slate-100 text-slate-700 text-[11px] uppercase font-black tracking-wider border-b border-slate-200 print:bg-slate-200 print:text-black">
                                     <th className="py-2.5 px-3">Patient Name</th>
                                     <th className="py-2.5 px-3">Department</th>
                                     <th className="py-2.5 px-3">Date</th>
@@ -1708,7 +1731,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                                             <td className="py-2 px-3 font-bold text-slate-900">
                                                 {d.patient_name}
                                             </td>
-                                            <td className="py-2 px-3 text-slate-500 text-[10px]">
+                                            <td className="py-2 px-3 text-slate-500 text-[11px]">
                                                 <span className="px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200">
                                                     {d.sheet_category}
                                                 </span>
@@ -1741,27 +1764,27 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
             <div className="hidden print:block mt-8 pt-6 border-t-2 border-slate-800">
                 <div className="grid grid-cols-2 gap-8 text-center">
                     <div>
-                        <span className="text-[10px] uppercase font-bold text-slate-500 block">Prepared By:</span>
+                        <span className="text-[11px] uppercase font-bold text-slate-500 block">Prepared By:</span>
                         <div className="mt-8 border-b border-slate-800 pb-1">
                             <span className="text-sm font-black text-slate-900 uppercase">CLYNT MARK S. ALIS</span>
                         </div>
-                        <span className="text-[10px] text-slate-600 mt-1 block">
+                        <span className="text-[11px] text-slate-600 mt-1 block">
                             Admin Assistant / Credit & Collection Staff
                         </span>
-                        <span className="text-[9px] text-slate-500 block">
+                        <span className="text-[11px] text-slate-500 block">
                             Financial Assistance In-Charge
                         </span>
                     </div>
 
                     <div>
-                        <span className="text-[10px] uppercase font-bold text-slate-500 block">Noted & Verified By:</span>
+                        <span className="text-[11px] uppercase font-bold text-slate-500 block">Noted & Verified By:</span>
                         <div className="mt-8 border-b border-slate-800 pb-1">
                             <span className="text-sm font-black text-slate-900 uppercase">MEMIA R. BUGTONG, CPA, MBA</span>
                         </div>
-                        <span className="text-[10px] text-slate-600 mt-1 block">
+                        <span className="text-[11px] text-slate-600 mt-1 block">
                             Accountant IV / Chief Accountant
                         </span>
-                        <span className="text-[9px] text-slate-500 block">
+                        <span className="text-[11px] text-slate-500 block">
                             Accounting & Financial Management Office
                         </span>
                     </div>
@@ -1769,9 +1792,13 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
             </div>
 
             {/* MODAL: ENCODE / EDIT SAA BUDGET ALLOTMENT */}
-            {isSaaModalOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-                    <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden animate-in fade-in zoom-in duration-150">
+            <Modal
+                show={isSaaModalOpen}
+                onClose={() => { if (!savingSaa) setIsSaaModalOpen(false); }}
+                closeable={!savingSaa}
+                maxWidth="lg"
+                panelClassName="rounded-2xl border border-slate-200"
+            >
                         <div className="bg-gradient-to-r from-teal-800 to-teal-900 text-white p-4 flex justify-between items-center">
                             <div className="flex items-center space-x-2">
                                 <span className="p-2 bg-white/10 rounded-xl">
@@ -1787,8 +1814,11 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                                 </div>
                             </div>
                             <button
+                                type="button"
+                                aria-label="Close modal"
                                 onClick={() => setIsSaaModalOpen(false)}
-                                className="text-white/70 hover:text-white p-1 rounded-lg hover:bg-white/10 transition-colors"
+                                disabled={savingSaa}
+                                className="text-white/70 hover:text-white p-1 rounded-lg hover:bg-white/10 transition-colors disabled:opacity-50"
                             >
                                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                             </button>
@@ -1808,7 +1838,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                                         placeholder="e.g. DOH (BG), DOH (CONG)"
                                         className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-mono font-bold focus:ring-2 focus:ring-teal-500 uppercase"
                                     />
-                                    <span className="text-[10px] text-slate-400 mt-0.5 block">Short identifier code</span>
+                                    <span className="text-[11px] text-slate-400 mt-0.5 block">Short identifier code</span>
                                 </div>
 
                                 <div>
@@ -1857,7 +1887,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                                         placeholder="e.g. 2026-03-001234"
                                         className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-mono font-bold focus:ring-2 focus:ring-teal-500 uppercase"
                                     />
-                                    <span className="text-[10px] text-slate-400 mt-0.5 block">Official Sub-Allotment Advice No.</span>
+                                    <span className="text-[11px] text-slate-400 mt-0.5 block">Official Sub-Allotment Advice No.</span>
                                 </div>
 
                                 <div>
@@ -1874,7 +1904,7 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                                         placeholder="0.00"
                                         className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-mono font-bold text-emerald-800 focus:ring-2 focus:ring-teal-500"
                                     />
-                                    <span className="text-[10px] text-slate-400 mt-0.5 block">Total budget ceiling</span>
+                                    <span className="text-[11px] text-slate-400 mt-0.5 block">Total budget ceiling</span>
                                 </div>
                             </div>
 
@@ -1918,9 +1948,18 @@ export default function CreditReportsModule({ onBackToMasterlist }) {
                                 </button>
                             </div>
                         </form>
-                    </div>
-                </div>
-            )}
+            </Modal>
+
+            <ConfirmDialog
+                show={Boolean(pendingDeleteGrantor)}
+                onClose={() => setPendingDeleteGrantor(null)}
+                onConfirm={executeDeleteSaa}
+                title="Delete SAA Fund Record"
+                message={pendingDeleteGrantor ? `Are you sure you want to delete SAA fund record for "${pendingDeleteGrantor.proponent}"?` : ''}
+                confirmLabel="Delete Record"
+                tone="danger"
+                loading={isDeletingSaa}
+            />
         </div>
     );
 }

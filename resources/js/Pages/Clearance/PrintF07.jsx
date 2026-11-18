@@ -5,10 +5,11 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
     const { auth } = usePage().props;
     
     useEffect(() => {
-        setTimeout(() => {
-            window.focus(); 
+        const timer = setTimeout(() => {
+            window.focus();
             window.print();
-        }, 800); 
+        }, 800);
+        return () => clearTimeout(timer);
     }, []);
 
     const getSignatory = (deptName) => {
@@ -114,7 +115,7 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
 
     return (
         <div className="bg-slate-200 print:bg-white min-h-screen font-serif text-black flex flex-col items-center p-4 print:p-0">
-            <Head title={`Clearance Slip - RMH-BCS-F07 - ${transaction?.patient_name}`} />
+            <Head title={`Clearance Slip - RMH-BCS-F07${transaction?.patient_name ? ` - ${transaction.patient_name}` : ''}`} />
 
             <style dangerouslySetInnerHTML={{ __html: `
                 @media print {
@@ -146,11 +147,24 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
 
                     <div className="flex border-b border-black h-16 shrink-0">
                         <div className="w-[15%] border-r border-black flex justify-center items-center p-1 relative">
-                            <img src="/images/capiz.jpg" alt="Capiz Logo" className="h-14 w-14 object-contain" onError={(e) => { e.target.style.display='none'; e.target.nextElementSibling.style.display='flex'; }} />
+                            <img
+                                src="/images/capiz.jpg"
+                                alt="Capiz Logo"
+                                className="h-14 w-14 object-contain"
+                                onError={(e) => {
+                                    e.currentTarget.style.display = 'none';
+                                    if (e.currentTarget.nextElementSibling) {
+                                        e.currentTarget.nextElementSibling.style.display = 'flex';
+                                    }
+                                }}
+                            />
+                            <span className="hidden h-14 w-14 items-center justify-center text-slate-900 font-sans text-[11px] font-bold text-center leading-tight uppercase border border-slate-400 rounded-full">
+                                Capiz
+                            </span>
                         </div>
                         <div className="w-[60%] flex flex-col">
                             <div className="h-2/3 border-b border-black relative flex items-center justify-center">
-                                <span className="absolute top-1 left-2 text-[10px]">Document Title:</span>
+                                <span className="absolute top-1 left-2 text-[11px]">Document Title:</span>
                                 <h1 className="text-xl font-bold tracking-widest mt-1">CLEARANCE SLIP</h1>
                             </div>
                             <div className="h-1/3 flex items-center px-2 text-[11px]">
@@ -158,12 +172,25 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
                             </div>
                         </div>
                         <div className="w-[25%] border-l border-black flex">
-                            <div className="w-[45%] border-r border-black flex flex-col justify-center items-center text-[10px]">
+                            <div className="w-[45%] border-r border-black flex flex-col justify-center items-center text-[11px]">
                                 <span>Rev No</span>
                                 <span className="font-bold text-[14px]">01</span>
                             </div>
                             <div className="w-[55%] flex justify-center items-center p-1 relative">
-                                <img src="/images/rmph.jpg" alt="RMPH Logo" className="h-12 w-12 object-contain" onError={(e) => { e.target.style.display='none'; e.target.nextElementSibling.style.display='flex'; }} />
+                                <img
+                                    src="/images/rmph.jpg"
+                                    alt="RMPH Logo"
+                                    className="h-12 w-12 object-contain"
+                                    onError={(e) => {
+                                        e.currentTarget.style.display = 'none';
+                                        if (e.currentTarget.nextElementSibling) {
+                                            e.currentTarget.nextElementSibling.style.display = 'flex';
+                                        }
+                                    }}
+                                />
+                                <span className="hidden h-12 w-12 items-center justify-center text-rose-700 font-sans text-[11px] font-bold text-center leading-tight uppercase border border-rose-400 rounded-full">
+                                    RMPH
+                                </span>
                             </div>
                         </div>
                     </div>
@@ -257,9 +284,9 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
                                             
                                             {sig ? (
                                                 <>
-                                                    <td className="border-r border-black font-sans font-bold text-[10px] uppercase tracking-wide">{sig.name}</td>
-                                                    <td className="border-r border-black font-sans font-semibold text-[10px]">{timeReceived}</td>
-                                                    <td className="font-sans font-semibold text-[10px]">{sig.time}</td>
+                                                    <td className="border-r border-black font-sans font-bold text-[11px] uppercase tracking-wide">{sig.name}</td>
+                                                    <td className="border-r border-black font-sans font-semibold text-[11px]">{timeReceived}</td>
+                                                    <td className="font-sans font-semibold text-[11px]">{sig.time}</td>
                                                 </>
                                             ) : (
                                                 <>

@@ -24,7 +24,7 @@ export default function Register({ departments = [] }) {
 
     return (
         <div className="min-h-screen flex flex-col md:flex-row font-sans">
-            <Head title="Register - RMPH Clearance" />
+            <Head title="Register" />
 
             {/* LEFT SIDEBAR (Dark Branding Section Matching Login) */}
             <div className="w-full md:w-[45%] bg-slate-900 text-white flex flex-col justify-center items-center p-8 relative overflow-hidden">
@@ -63,10 +63,7 @@ export default function Register({ departments = [] }) {
 
                     <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-6 w-full backdrop-blur-sm">
                         <div className="flex items-center text-teal-400 font-bold mb-4 text-sm tracking-wide">
-                            <span className="relative flex h-3 w-3 mr-2">
-                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal-400 opacity-75"></span>
-                                <span className="relative inline-flex rounded-full h-3 w-3 bg-teal-500"></span>
-                            </span>
+                            <span className="inline-flex rounded-full h-2.5 w-2.5 mr-2 bg-teal-400" aria-hidden="true"></span>
                             SYSTEM ONLINE
                         </div>
                         
@@ -109,7 +106,7 @@ export default function Register({ departments = [] }) {
                                     value={data.name}
                                     className="block w-full px-4 py-3 border border-slate-200 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500 sm:text-sm font-medium transition-colors"
                                     autoComplete="name"
-                                    isFocused={true}
+                                    autoFocus
                                     onChange={(e) => setData('name', e.target.value)}
                                     required
                                 />
@@ -146,9 +143,7 @@ export default function Register({ departments = [] }) {
                                 className="block w-full px-4 py-3 border border-slate-200 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500 sm:text-sm font-medium transition-colors text-slate-700"
                                 required
                             >
-                                <option value="">Select a role or department...</option>
-                                <option value="Supervisor">Supervisor</option>
-                                <option value="Billing & Claims">Billing & Claims</option>
+                                <option value="">Select a department...</option>
                                 
                                 {/* Dynamic Departments from Database */}
                                 {departments.length > 0 ? (
