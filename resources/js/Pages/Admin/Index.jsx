@@ -825,8 +825,9 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
                                     <option value="ICT / Admin">ICT / Admin (Administrator)</option>
                                     <option value="Supervisor">Supervisor (Clinical / Nursing)</option>
                                     <option value="Billing & Claims">Billing & Claims</option>
+                                    <option value="Head of Billing & Claims">Head of Billing & Claims</option>
                                     {departments
-                                        .filter(dept => !['billing & claims', 'ict / admin', 'supervisor'].includes(dept.name.trim().toLowerCase()))
+                                        .filter(dept => !['billing & claims', 'head of billing & claims', 'ict / admin', 'supervisor'].includes(dept.name.trim().toLowerCase()))
                                         .map(dept => (
                                             <option key={dept.id} value={dept.name}>{dept.name} ({dept.category})</option>
                                         ))}
@@ -881,8 +882,9 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
                                     <option value="ICT / Admin">ICT / Admin</option>
                                     <option value="Supervisor">Supervisor</option>
                                     <option value="Billing & Claims">Billing & Claims</option>
+                                    <option value="Head of Billing & Claims">Head of Billing & Claims</option>
                                     {departments
-                                        .filter(dept => !['billing & claims', 'ict / admin', 'supervisor'].includes(dept.name.trim().toLowerCase()))
+                                        .filter(dept => !['billing & claims', 'head of billing & claims', 'ict / admin', 'supervisor'].includes(dept.name.trim().toLowerCase()))
                                         .map(dept => (
                                             <option key={dept.id} value={dept.name}>{dept.name}</option>
                                         ))}

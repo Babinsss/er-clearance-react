@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Head, router } from '@inertiajs/react';
 import PortalLayout from '@/Layouts/PortalLayout';
 import Modal from '@/Components/Modal';
+import BillingReportsPanel from '@/Components/BillingReportsPanel';
 
 export default function Billing({ 
     clearedPatients = [], 
@@ -15,10 +16,12 @@ export default function Billing({
     totalArchivedCount = 0, 
     archiveSearch = '', 
     archivePage = 1,
-    archivePerPage = 50 
+    archivePerPage = 50,
+    canGenerateReports = false,
+    isBillingHead = false,
 }) {
-    // Top-level Navigation: 'routing' | 'ready' | 'archived'
-    const [activeTab, setActiveTab] = useState('routing'); 
+    // Top-level Navigation: 'reports' (Head of Billing) | 'routing' | 'ready' | 'archived'
+    const [activeTab, setActiveTab] = useState(isBillingHead ? 'reports' : 'routing');
 
     // Search & Filter State
     const [searchTerm, setSearchTerm] = useState(archiveSearch || '');
@@ -261,21 +264,25 @@ export default function Billing({
 
     return (
         <PortalLayout>
-            <Head title="Billing & Claims Portal" />
+            <Head title={isBillingHead ? 'Head of Billing & Claims Portal' : 'Billing & Claims Portal'} />
             
             <div className="flex flex-col lg:flex-row gap-6 w-full p-4 sm:p-6 bg-slate-100 min-h-[calc(100vh-64px)] font-sans">
                 
                 {/* LEFT SIDEBAR */}
                 <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 flex flex-col shrink-0 w-full lg:w-[270px]">
-                    <div className="mb-6 px-2 pt-1 flex justify-between items-start border-b border-slate-100 pb-4">
+                    <div className="mb-5 px-1 pt-1 flex justify-between items-start border-b border-slate-100 pb-4">
                         <div>
-                            <h2 className="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Finalization Portal</h2>
-                            <div className="text-xl font-extrabold text-slate-800 leading-tight">Billing &<br/>Claims</div>
+                            <h2 className="text-lg font-extrabold text-slate-900 leading-snug tracking-tight">
+                                {isBillingHead ? 'Head of Billing & Claims' : 'Billing & Claims'}
+                            </h2>
+                            <p className="text-xs text-slate-500 font-medium mt-0.5">
+                                {isBillingHead ? 'Reports & clearance oversight' : 'Finalization & F07 queue'}
+                            </p>
                         </div>
                         <button 
                             type="button"
                             onClick={() => setSoundEnabled(!soundEnabled)} 
-                            className="text-slate-400 hover:text-teal-600 transition-colors p-1.5 bg-slate-50 rounded-lg border border-slate-200 shadow-sm" 
+                            className="text-slate-400 hover:text-teal-600 transition-colors p-1.5 bg-slate-50 rounded-lg border border-slate-200 shadow-sm shrink-0" 
                             title={soundEnabled ? "Mute Clearance Alerts" : "Enable Clearance Alerts"}
                             aria-label={soundEnabled ? "Mute clearance alerts" : "Enable clearance alerts"}
                         >
@@ -288,14 +295,15 @@ export default function Billing({
                     </div>
 
                     {/* Navigation Tabs */}
-                    <nav className="flex-1 space-y-2">
+                    <nav className="flex-1 space-y-1.5">
                         {/* 1. ROUTING MONITOR TAB */}
                         <button 
+                            type="button"
                             onClick={() => setActiveTab('routing')} 
-                            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-xs font-bold transition-all ${
+                            className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all border ${
                                 activeTab === 'routing' 
-                                    ? 'bg-amber-50 text-amber-800 border-l-4 border-amber-500 shadow-sm' 
-                                    : 'text-slate-600 hover:bg-slate-50 border-l-4 border-transparent'
+                                    ? 'bg-amber-50 text-amber-900 border-amber-200 shadow-sm' 
+                                    : 'text-slate-600 hover:bg-slate-50 border-transparent'
                             }`}
                         >
                             <div className="flex items-center space-x-2.5">
@@ -304,25 +312,24 @@ export default function Billing({
                                 </span>
                                 <div className="text-left">
                                     <span className="block font-bold">Routing Monitor</span>
-                                    <span className="text-[11px] text-slate-400 font-normal">Active routing & speed</span>
+                                    <span className={`text-[11px] font-normal ${activeTab === 'routing' ? 'text-amber-800/80' : 'text-slate-500'}`}>Active routing &amp; speed</span>
                                 </div>
                             </div>
-                            <div className="flex items-center space-x-1">
-                                <span className={`text-[11px] px-2 py-0.5 rounded-full font-mono font-bold shadow-sm ${
-                                    routedPatients.length > 0 ? 'bg-amber-500 text-white' : 'bg-slate-200 text-slate-600'
-                                }`}>
-                                    {routedPatients.length}
-                                </span>
-                            </div>
+                            <span className={`text-[11px] px-2 py-0.5 rounded-full font-mono tabular-nums font-bold ${
+                                routedPatients.length > 0 ? 'bg-amber-600 text-white' : 'bg-slate-200 text-slate-600'
+                            }`}>
+                                {routedPatients.length}
+                            </span>
                         </button>
 
                         {/* 2. READY FOR PRINT TAB */}
                         <button 
+                            type="button"
                             onClick={() => setActiveTab('ready')} 
-                            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-xs font-bold transition-all ${
+                            className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all border ${
                                 activeTab === 'ready' 
-                                    ? 'bg-teal-50 text-teal-800 border-l-4 border-teal-500 shadow-sm' 
-                                    : 'text-slate-600 hover:bg-slate-50 border-l-4 border-transparent'
+                                    ? 'bg-teal-50 text-teal-900 border-teal-200 shadow-sm' 
+                                    : 'text-slate-600 hover:bg-slate-50 border-transparent'
                             }`}
                         >
                             <div className="flex items-center space-x-2.5">
@@ -331,11 +338,11 @@ export default function Billing({
                                 </span>
                                 <div className="text-left">
                                     <span className="block font-bold">Ready for Print</span>
-                                    <span className="text-[11px] text-slate-400 font-normal">Fully cleared queue</span>
+                                    <span className={`text-[11px] font-normal ${activeTab === 'ready' ? 'text-teal-800/80' : 'text-slate-500'}`}>Fully cleared queue</span>
                                 </div>
                             </div>
                             {clearedPatients.length > 0 && (
-                                <span className="bg-teal-600 text-white text-[11px] px-2 py-0.5 rounded-full shadow-sm font-mono font-bold">
+                                <span className="bg-teal-600 text-white text-[11px] px-2 py-0.5 rounded-full font-mono tabular-nums font-bold">
                                     {clearedPatients.length}
                                 </span>
                             )}
@@ -343,28 +350,52 @@ export default function Billing({
 
                         {/* 3. PRINTED ARCHIVES TAB */}
                         <button 
+                            type="button"
                             onClick={() => setActiveTab('archived')} 
-                            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-xs font-bold transition-all ${
+                            className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all border ${
                                 activeTab === 'archived' 
-                                    ? 'bg-slate-200 text-slate-800 border-l-4 border-slate-600 shadow-sm' 
-                                    : 'text-slate-600 hover:bg-slate-50 border-l-4 border-transparent'
+                                    ? 'bg-slate-100 text-slate-900 border-slate-300 shadow-sm' 
+                                    : 'text-slate-600 hover:bg-slate-50 border-transparent'
                             }`}
                         >
                             <div className="flex items-center space-x-2.5">
-                                <span className={`p-1.5 rounded-lg ${activeTab === 'archived' ? 'bg-slate-300 text-slate-700' : 'bg-slate-100 text-slate-500'}`}>
+                                <span className={`p-1.5 rounded-lg ${activeTab === 'archived' ? 'bg-slate-200 text-slate-800' : 'bg-slate-100 text-slate-500'}`}>
                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path></svg>
                                 </span>
                                 <div className="text-left">
                                     <span className="block font-bold">Printed Archives</span>
-                                    <span className="text-[11px] text-slate-400 font-normal">Finalized masterlist</span>
+                                    <span className="text-[11px] text-slate-500 font-normal">Finalized masterlist</span>
                                 </div>
                             </div>
                             {totalArchivedCount > 0 && (
-                                <span className="bg-slate-500 text-white text-[11px] px-2 py-0.5 rounded-full shadow-sm font-mono font-bold">
+                                <span className="bg-slate-600 text-white text-[11px] px-2 py-0.5 rounded-full font-mono tabular-nums font-bold">
                                     {totalArchivedCount.toLocaleString()}
                                 </span>
                             )}
                         </button>
+
+                        {/* 4. ROUTED REPORTS TAB (HEAD OF BILLING & CLAIMS / ADMIN) */}
+                        {canGenerateReports && (
+                            <button
+                                type="button"
+                                onClick={() => setActiveTab('reports')}
+                                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all border ${
+                                    activeTab === 'reports'
+                                        ? 'bg-teal-50 text-teal-900 border-teal-200 shadow-sm'
+                                        : 'text-slate-600 hover:bg-slate-50 border-transparent'
+                                }`}
+                            >
+                                <div className="flex items-center space-x-2.5">
+                                    <span className={`p-1.5 rounded-lg ${activeTab === 'reports' ? 'bg-teal-600 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                    </span>
+                                    <div className="text-left">
+                                        <span className="block font-bold">Routed Reports</span>
+                                        <span className={`text-[11px] font-normal ${activeTab === 'reports' ? 'text-teal-800/80' : 'text-slate-500'}`}>Alphabetical &amp; disposition</span>
+                                    </div>
+                                </div>
+                            </button>
+                        )}
                     </nav>
 
                     {/* Quick Hospital Turnaround Widget in Sidebar */}
@@ -1275,6 +1306,13 @@ export default function Billing({
                                 </div>
                             )}
                         </div>
+                    )}
+
+                    {/* ========================================================================= */}
+                    {/* TAB 4: ROUTED PATIENTS MASTERLIST & DISPOSITION REPORTS                   */}
+                    {/* ========================================================================= */}
+                    {activeTab === 'reports' && canGenerateReports && (
+                        <BillingReportsPanel />
                     )}
 
                 </div>

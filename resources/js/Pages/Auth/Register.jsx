@@ -148,7 +148,7 @@ export default function Register({ departments = [] }) {
                                 {/* Dynamic Departments from Database */}
                                 {departments.length > 0 ? (
                                     departments
-                                        .filter((dept) => !['billing & claims', 'ict / admin', 'supervisor'].includes(dept.name.trim().toLowerCase()))
+                                        .filter((dept) => !['billing & claims', 'head of billing & claims', 'ict / admin', 'supervisor'].includes(dept.name.trim().toLowerCase()))
                                         .map((dept) => (
                                             <option key={dept.id} value={dept.name}>
                                                 {dept.name}

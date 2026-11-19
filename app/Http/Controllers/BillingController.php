@@ -5,9 +5,11 @@ namespace App\Http\Controllers;
 use App\Models\ClearanceLog;
 use App\Models\ClearanceTransaction;
 use App\Models\Department;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 
 class BillingController extends Controller
 {
@@ -444,6 +446,255 @@ class BillingController extends Controller
             'archiveSearch' => $archiveSearch,
             'archivePage' => $archivePage,
             'archivePerPage' => $perPage,
+            'canGenerateReports' => $this->isBillingHead($request->user()),
+            'isBillingHead' => $this->isStrictBillingHead($request->user()),
+        ]);
+    }
+
+    /**
+     * Check if the user is Head of Billing & Claims (strictly).
+     */
+    private function isStrictBillingHead(?User $user): bool
+    {
+        $dept = strtolower(trim($user->department ?? ''));
+        return in_array($dept, [
+            'head of billing & claims',
+            'head of billing and claims',
+            'billing head',
+        ], true);
+    }
+
+    /**
+     * Check if the user can generate Head of Billing & Claims routed patient reports.
+     */
+    private function isBillingHead(?User $user): bool
+    {
+        $dept = strtolower(trim($user->department ?? ''));
+        return $this->isStrictBillingHead($user) || $dept === 'ict / admin';
+    }
+
+    /**
+     * Abort unless authenticated user is Head of Billing & Claims or ICT / Admin.
+     */
+    private function authorizeBillingHead(Request $request): void
+    {
+        if (!$this->isBillingHead($request->user())) {
+            abort(403, 'Unauthorized access to Head of Billing & Claims reports.');
+        }
+    }
+
+    /**
+     * Query, filter, sort, and summarize routed patients for reports, print view, and CSV export.
+     */
+    private function buildRoutedReportData(Request $request): array
+    {
+        $dateFrom = trim((string) $request->query('date_from', ''));
+        $dateTo = trim((string) $request->query('date_to', ''));
+        $disposition = trim((string) $request->query('disposition', 'all'));
+        $ward = trim((string) $request->query('ward', 'all'));
+        $status = trim((string) $request->query('status', 'all_routed'));
+        $search = trim((string) $request->query('search', ''));
+        $startsWith = strtoupper(trim((string) $request->query('starts_with', '')));
+        if (!preg_match('/^[A-Z]$/', $startsWith)) {
+            $startsWith = '';
+        }
+        $layout = trim((string) $request->query('layout', 'alphabetical'));
+        if (!in_array($layout, ['alphabetical', 'by_disposition'], true)) {
+            $layout = 'alphabetical';
+        }
+        $sortDir = strtolower(trim((string) $request->query('sort_dir', 'asc'))) === 'desc' ? 'desc' : 'asc';
+
+        $query = ClearanceTransaction::query();
+
+        if ($dateFrom !== '') {
+            $query->whereDate('created_at', '>=', $dateFrom);
+        }
+        if ($dateTo !== '') {
+            $query->whereDate('created_at', '<=', $dateTo);
+        }
+
+        if ($status === 'all_routed') {
+            $query->where('overall_status', '!=', 'Cancelled');
+        } elseif ($status !== 'all' && $status !== '') {
+            $query->where('overall_status', $status);
+        }
+
+        if ($disposition !== '' && strtolower($disposition) !== 'all') {
+            if (strtolower($disposition) === 'unspecified') {
+                $query->where(function ($q) {
+                    $q->whereNull('disposition')->orWhereRaw("TRIM(disposition) = ''");
+                });
+            } else {
+                $query->whereRaw('LOWER(TRIM(disposition)) = ?', [strtolower($disposition)]);
+            }
+        }
+
+        if ($ward !== '' && strtolower($ward) !== 'all') {
+            $query->whereRaw('LOWER(TRIM(room_ward)) = ?', [strtolower($ward)]);
+        }
+
+        if ($search !== '') {
+            $query->where(function ($q) use ($search) {
+                $q->where('patient_name', 'like', "%{$search}%")
+                  ->orWhere('hospital_number', 'like', "%{$search}%")
+                  ->orWhere('enccode', 'like', "%{$search}%")
+                  ->orWhere('encoded_by', 'like', "%{$search}%");
+            });
+        }
+
+        if ($startsWith !== '') {
+            $query->whereRaw('UPPER(TRIM(patient_name)) LIKE ?', [$startsWith . '%']);
+        }
+
+        if ($layout === 'by_disposition') {
+            $query->orderByRaw("COALESCE(NULLIF(TRIM(disposition), ''), 'Unspecified') ASC");
+        }
+        $query->orderByRaw('LOWER(TRIM(patient_name)) ' . ($sortDir === 'desc' ? 'DESC' : 'ASC'));
+        $query->orderBy('created_at', 'desc');
+
+        $rows = $query->get();
+
+        $dispositionCounts = [];
+        $records = $rows->map(function ($tx) use (&$dispositionCounts) {
+            $disp = trim((string) ($tx->disposition ?? ''));
+            $dispLabel = $disp !== '' ? $disp : 'Unspecified';
+            $dispositionCounts[$dispLabel] = ($dispositionCounts[$dispLabel] ?? 0) + 1;
+
+            return [
+                'id' => $tx->id,
+                'enccode' => $tx->enccode,
+                'hospital_number' => $tx->hospital_number,
+                'patient_name' => $tx->patient_name,
+                'room_ward' => $tx->room_ward ?: 'Unspecified',
+                'disposition' => $dispLabel,
+                'overall_status' => $tx->overall_status,
+                'is_oecb' => (bool) $tx->is_oecb,
+                'has_oxygen' => (bool) $tx->has_oxygen,
+                'encoded_by' => $tx->encoded_by ?: '—',
+                'arrival_datetime' => $tx->arrival_datetime
+                    ? \Carbon\Carbon::parse($tx->arrival_datetime)->toIso8601String()
+                    : null,
+                'created_at' => $tx->created_at ? $tx->created_at->toIso8601String() : null,
+                'created_at_formatted' => $tx->created_at
+                    ? $tx->created_at->timezone('Asia/Manila')->format('M d, Y h:i A')
+                    : '—',
+            ];
+        })->values()->all();
+
+        $total = count($records);
+        $dispositionSummary = [];
+        arsort($dispositionCounts);
+        foreach ($dispositionCounts as $label => $cnt) {
+            $dispositionSummary[] = [
+                'disposition' => $label,
+                'count' => $cnt,
+                'percentage' => $total > 0 ? round(($cnt / $total) * 100, 1) : 0,
+            ];
+        }
+
+        $availableDispositions = ClearanceTransaction::query()
+            ->selectRaw("DISTINCT COALESCE(NULLIF(TRIM(disposition), ''), 'Unspecified') as disp")
+            ->orderBy('disp')
+            ->pluck('disp')
+            ->toArray();
+
+        $availableWards = ClearanceTransaction::query()
+            ->whereNotNull('room_ward')
+            ->whereRaw("TRIM(room_ward) != ''")
+            ->selectRaw('DISTINCT TRIM(room_ward) as ward')
+            ->orderBy('ward')
+            ->pluck('ward')
+            ->toArray();
+
+        return [
+            'records' => $records,
+            'total' => $total,
+            'dispositionSummary' => $dispositionSummary,
+            'availableDispositions' => $availableDispositions,
+            'availableWards' => $availableWards,
+            'filters' => [
+                'date_from' => $dateFrom,
+                'date_to' => $dateTo,
+                'disposition' => $disposition !== '' ? $disposition : 'all',
+                'ward' => $ward !== '' ? $ward : 'all',
+                'status' => $status !== '' ? $status : 'all_routed',
+                'search' => $search,
+                'starts_with' => $startsWith,
+                'layout' => $layout,
+                'sort_dir' => $sortDir,
+            ],
+        ];
+    }
+
+    /**
+     * JSON endpoint for Head of Billing & Claims routed patients report preview.
+     */
+    public function routedReports(Request $request)
+    {
+        $this->authorizeBillingHead($request);
+        return response()->json($this->buildRoutedReportData($request));
+    }
+
+    /**
+     * Dedicated printable report view for Head of Billing & Claims.
+     */
+    public function printRoutedReports(Request $request)
+    {
+        $this->authorizeBillingHead($request);
+        $data = $this->buildRoutedReportData($request);
+        $data['generatedAt'] = now('Asia/Manila')->format('F d, Y h:i A');
+
+        return Inertia::render('Billing/PrintRoutedReport', $data);
+    }
+
+    /**
+     * Stream CSV export of filtered routed patients report.
+     */
+    public function exportRoutedReportsCsv(Request $request)
+    {
+        $this->authorizeBillingHead($request);
+        $data = $this->buildRoutedReportData($request);
+
+        $filename = 'routed-patients-report-' . now('Asia/Manila')->format('Y-m-d_Hi') . '.csv';
+
+        return response()->streamDownload(function () use ($data) {
+            $out = fopen('php://output', 'w');
+            // UTF-8 BOM for Excel compatibility
+            fwrite($out, "\xEF\xBB\xBF");
+
+            fputcsv($out, [
+                '#',
+                'Patient Name',
+                'Hospital Number',
+                'Encounter Code',
+                'Originating Ward',
+                'Type of Disposition',
+                'Routing Status',
+                'OECB',
+                'Oxygen',
+                'Routed Date & Time',
+                'Encoded By',
+            ]);
+
+            foreach ($data['records'] as $idx => $row) {
+                fputcsv($out, [
+                    $idx + 1,
+                    $row['patient_name'],
+                    $row['hospital_number'],
+                    $row['enccode'],
+                    $row['room_ward'],
+                    $row['disposition'],
+                    $row['overall_status'],
+                    $row['is_oecb'] ? 'Yes' : 'No',
+                    $row['has_oxygen'] ? 'Yes' : 'No',
+                    $row['created_at_formatted'],
+                    $row['encoded_by'],
+                ]);
+            }
+
+            fclose($out);
+        }, $filename, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
         ]);
     }
 

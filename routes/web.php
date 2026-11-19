@@ -45,8 +45,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
             return redirect()->route('supervisor.index');
         }
         
-        // --- 1. BILLING & CLAIMS LOGIC ---
-        if ($user->department === 'Billing & Claims' || $user->department === 'Billing' || $user->department === 'Claims' || $user->department === 'Billing and Claims') {
+        // --- 1. BILLING & CLAIMS LOGIC (INCLUDES HEAD OF BILLING & CLAIMS) ---
+        $deptLower = strtolower(trim($user->department ?? ''));
+        if (in_array($deptLower, ['billing & claims', 'billing', 'claims', 'billing and claims', 'head of billing & claims', 'head of billing and claims', 'billing head'], true)) {
             return app(BillingController::class)->index(request());
         }
 
@@ -312,6 +313,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
     // --- BILLING ROUTES ---
     Route::get('/billing', [BillingController::class, 'index'])->name('billing.index');
     Route::get('/billing/analytics', [BillingController::class, 'getCostCenterAnalytics'])->name('billing.analytics');
+    Route::get('/billing/reports', [BillingController::class, 'routedReports'])->name('billing.reports');
+    Route::get('/billing/reports/print', [BillingController::class, 'printRoutedReports'])->name('billing.reports.print');
+    Route::get('/billing/reports/csv', [BillingController::class, 'exportRoutedReportsCsv'])->name('billing.reports.csv');
 
     // --- CLEARANCE ROUTES ---
     Route::post('/transactions', [ClearanceController::class, 'storeTransaction'])->name('transactions.store');
