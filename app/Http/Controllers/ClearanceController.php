@@ -223,6 +223,7 @@ class ClearanceController extends Controller
         $orOrders = [];
         $lrDrOrders = [];
         $hduOrders = [];
+        $nicuOrders = [];
 
         $csrRegex = '/(SYRINGE|MACROSET|MICROSET|CANNULA|VENFLON|GAUZE|GLOVE|TUBE|PACK|NEEDLE|CATH|PLASTER|COTTON|TAPE|CHERRY|BALL|BANDAGE|DRAPE|LANCET|BLADE|SUTURE|DIAPER|UNDERPAD|MASK|GOWN|WATER|STERILE|POVIDONE|ALCOHOL|DRESSING|NSS|SALINE|D5|LR|RINGER|SET|KIT|SWAB|GEL|PUMP|CAP|LINEN|EUROMED)/';
 
@@ -254,6 +255,7 @@ class ClearanceController extends Controller
             $isOR = preg_match('/\b(OR|OPERATING ROOM|SURG|SURGERY)\b/', $desc) || preg_match('/\b(OR FEE|SURGERY|MAJOR OP|MINOR OP|ANESTHESIA)\b/', $desc);
             $isLRDR = preg_match('/\b(DR|LR|DELIVERY ROOM|LABOR ROOM|OB-GYN)\b/', $desc) || preg_match('/\b(DELIVERY|NSD|CESAREAN|EPISIOTOMY|NEWBORN)\b/', $desc);
             $isHDU = preg_match('/\b(HDU|CKD|DIALYSIS|HEMODIALYSIS)\b/', $desc);
+            $isNICU = preg_match('/\b(NICU|NEONATAL)\b/', $desc);
 
             if ($forcePharma) {
                 $pharmacyOrders[] = $cleanItem;
@@ -269,6 +271,8 @@ class ClearanceController extends Controller
                 $lrDrOrders[] = $cleanItem;
             } elseif ($isHDU) {
                 $hduOrders[] = $cleanItem;
+            } elseif ($isNICU) {
+                $nicuOrders[] = $cleanItem;
             } elseif ($isPharma === 'N' || str_starts_with($majorCategory, '018') || preg_match($csrRegex, $baseName) || str_contains($desc, 'CSR')) {
                 $csrOrders[] = $cleanItem;
             } 
@@ -350,6 +354,7 @@ class ClearanceController extends Controller
             $isOR = preg_match('/\b(OR|OPERATING ROOM|SURG|SURGERY)\b/', $upperCategory) || preg_match('/\b(OR FEE|SURGERY|MAJOR OP|MINOR OP|ANESTHESIA)\b/', $desc);
             $isLRDR = preg_match('/\b(DR|LR|DELIVERY ROOM|LABOR ROOM|OB-GYN)\b/', $upperCategory) || preg_match('/\b(DELIVERY|NSD|CESAREAN|EPISIOTOMY|NEWBORN)\b/', $desc);
             $isHDU = preg_match('/\b(HDU|CKD|DIALYSIS|HEMODIALYSIS)\b/', $upperCategory) || preg_match('/\b(HEMODIALYSIS|DIALYSIS)\b/', $desc);
+            $isNICU = preg_match('/\b(NICU|NEONATAL)\b/', $upperCategory) || preg_match('/\b(NICU|NEONATAL)\b/', $desc);
 
             if ($forcePharma) {
                 $pharmacyOrders[] = $cleanItem;
@@ -363,6 +368,8 @@ class ClearanceController extends Controller
                 $lrDrOrders[] = $cleanItem;
             } elseif ($isHDU) {
                 $hduOrders[] = $cleanItem;
+            } elseif ($isNICU) {
+                $nicuOrders[] = $cleanItem;
             } elseif ($isBarcode || $isPharma === 'N' || str_starts_with($majorCategory, '018') || preg_match($csrRegex, strtoupper($baseName)) || preg_match('/\bCSR\b/', $upperCategory) || preg_match('/\bSUPPLIES CSR\b/', $upperCategory)) {
                 $csrOrders[] = $cleanItem;
             } elseif (preg_match('/\bLAB(ORATORY|S)?\b/', $upperCategory)) { 
@@ -383,6 +390,7 @@ class ClearanceController extends Controller
         $orOrders = collect($orOrders)->unique('item_description')->values()->all();
         $lrDrOrders = collect($lrDrOrders)->unique('item_description')->values()->all();
         $hduOrders = collect($hduOrders)->unique('item_description')->values()->all();
+        $nicuOrders = collect($nicuOrders)->unique('item_description')->values()->all();
 
         $clearedDepartments = \App\Models\ClearanceLog::where('enccode', $enccode)
             ->pluck('department')
@@ -401,6 +409,7 @@ class ClearanceController extends Controller
                 'orOrders' => $orOrders,
                 'lrDrOrders' => $lrDrOrders,
                 'hduOrders' => $hduOrders,
+                'nicuOrders' => $nicuOrders,
                 'clearedDepartments' => $clearedDepartments
             ]);
         }
@@ -417,6 +426,7 @@ class ClearanceController extends Controller
             'orOrders' => $orOrders,
             'lrDrOrders' => $lrDrOrders,
             'hduOrders' => $hduOrders,
+            'nicuOrders' => $nicuOrders,
             'clearedDepartments' => $clearedDepartments
         ]);
     }
@@ -451,10 +461,17 @@ class ClearanceController extends Controller
             'is_oecb' => 'nullable|boolean',
             'has_oxygen' => 'nullable|boolean',
             'oxygen_remarks' => 'nullable|string',
+            'requires_or' => 'nullable|boolean',
+            'requires_nicu' => 'nullable|boolean',
         ]);
 
         $existing = ClearanceTransaction::where('enccode', $request->enccode)->first();
         $initialStatus = ($existing && $existing->overall_status !== 'Cancelled') ? $existing->overall_status : 'Routing in Progress';
+
+        $wardDept = strtolower(trim($request->user()->department ?? ''));
+        $isErWard = $wardDept === 'emergency room' || $wardDept === 'er' || str_contains($wardDept, 'emergency');
+        $isOutpatientWard = str_contains($wardDept, 'outpatient') || str_contains($wardDept, 'opd') || str_contains($wardDept, 'hemodialysis') || str_contains($wardDept, 'dialysis') || str_contains($wardDept, 'hdu');
+        $allowsAdditionalClearance = !$isErWard && !$isOutpatientWard;
 
         ClearanceTransaction::updateOrCreate(
             ['enccode' => $request->enccode],
@@ -468,13 +485,13 @@ class ClearanceController extends Controller
                 'is_oecb' => $request->is_oecb ?? false,
                 'has_oxygen' => $request->has_oxygen ?? false,
                 'oxygen_remarks' => $request->oxygen_remarks,
+                'requires_or' => $allowsAdditionalClearance && (bool) ($request->requires_or ?? false),
+                'requires_nicu' => $allowsAdditionalClearance && (bool) ($request->requires_nicu ?? false),
                 'encoded_by' => $request->user()->name,
             ]
         );
 
         // When routing from Outpatient, automatically clear all cost centers except HDU
-        $wardDept = strtolower(trim($request->user()->department ?? ''));
-        $isOutpatientWard = str_contains($wardDept, 'outpatient') || str_contains($wardDept, 'opd') || str_contains($wardDept, 'hemodialysis') || str_contains($wardDept, 'dialysis') || str_contains($wardDept, 'hdu');
         if ($isOutpatientWard) {
             $autoDepts = ['Pharmacy', 'Laboratory', 'Radiology', 'Cardio Pulmo', 'CSR'];
             foreach ($autoDepts as $d) {
@@ -503,13 +520,10 @@ class ClearanceController extends Controller
         }
 
         $wardStr = strtolower(trim($transaction->room_ward ?? ''));
-        $isEr = $wardStr === 'emergency room' || $wardStr === 'er' || str_contains($wardStr, 'emergency');
-        $isSurgOrtho = str_contains($wardStr, 'ortho') || str_contains($wardStr, 'surg');
-        $isOB = str_contains($wardStr, 'ob');
         $isOutpatient = str_contains($wardStr, 'outpatient') || str_contains($wardStr, 'opd') || str_contains($wardStr, 'hemodialysis') || str_contains($wardStr, 'dialysis') || str_contains($wardStr, 'hdu');
 
         if ($isOutpatient) {
-            // Outpatient encounters automatically clear from all cost centers except HDU
+            // Outpatient encounters automatically clear from standard cost centers except HDU (and any toggled OR/NICU)
             $autoDepts = ['Pharmacy', 'Laboratory', 'Radiology', 'Cardio Pulmo', 'CSR'];
             $encoderUser = \App\Models\User::where('name', $transaction->encoded_by)->first() ?? \App\Models\User::first();
             $autoUserId = $encoderUser ? $encoderUser->id : 1;
@@ -519,59 +533,19 @@ class ClearanceController extends Controller
                     ['user_id' => $autoUserId]
                 );
             }
-            $requiredDepartments = ['Pharmacy', 'Laboratory', 'Radiology', 'Cardio Pulmo', 'CSR', 'HDU'];
-        } else {
-            $requiredDepartments = ['Pharmacy', 'Laboratory', 'Radiology', 'Cardio Pulmo', 'CSR'];
-
-            // Credit and Collection is applicable for admitted patients only and not for ER
-            $isAdmitted = !$isEr;
-            if ($isAdmitted) {
-                $requiredDepartments[] = 'Credit and Collection';
-            }
-
-            if ($isSurgOrtho) {
-                $requiredDepartments[] = 'OR';
-            } elseif ($isOB) {
-                $requiredDepartments[] = 'LR/DR';
-            }
         }
 
-        $clearedDepartments = ClearanceLog::where('enccode', $enccode)
-            ->pluck('department')
-            ->map(fn($d) => strtoupper(trim($d)))
-            ->toArray();
-        
+        $requiredDepartments = BillingController::getRequiredDepartmentsForWard(
+            $transaction->room_ward,
+            (bool) $transaction->requires_or,
+            (bool) $transaction->requires_nicu
+        );
+
+        $patientLogs = ClearanceLog::where('enccode', $enccode)->get();
+
         $missing = [];
         foreach ($requiredDepartments as $req) {
-            $reqUpper = strtoupper(trim($req));
-            $isCleared = false;
-            foreach ($clearedDepartments as $cleared) {
-                if ($cleared === $reqUpper) {
-                    $isCleared = true;
-                    break;
-                }
-                if ($reqUpper === 'CREDIT AND COLLECTION' && (str_contains($cleared, 'CREDIT') || str_contains($cleared, 'COLLECTION'))) {
-                    $isCleared = true;
-                    break;
-                }
-                if ($reqUpper === 'OR' && ($cleared === 'OR/LR/DR' || $cleared === 'OPERATING ROOM')) {
-                    $isCleared = true;
-                    break;
-                }
-                if ($reqUpper === 'LR/DR' && ($cleared === 'OR/LR/DR' || $cleared === 'LR / DR' || $cleared === 'LR' || $cleared === 'DR' || $cleared === 'DELIVERY ROOM')) {
-                    $isCleared = true;
-                    break;
-                }
-                if ($reqUpper === 'HDU' && ($cleared === 'HDU' || $cleared === 'CKD' || $cleared === 'DIALYSIS' || $cleared === 'DIALYSIS UNIT' || $cleared === 'HEMODIALYSIS')) {
-                    $isCleared = true;
-                    break;
-                }
-                if ($reqUpper === 'CARDIO PULMO' && (str_contains($cleared, 'CARDIO') || str_contains($cleared, 'ECG'))) {
-                    $isCleared = true;
-                    break;
-                }
-            }
-            if (!$isCleared) {
+            if (!BillingController::matchDepartmentLog($req, $patientLogs)) {
                 $missing[] = $req;
             }
         }

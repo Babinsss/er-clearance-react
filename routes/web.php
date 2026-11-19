@@ -75,15 +75,20 @@ Route::middleware(['auth', 'verified'])->group(function () {
             if ($deptUpper === 'OR' || $deptUpper === 'OPERATING ROOM') {
                 $orWards = ['Surgical Ward', 'Surgical', 'Surgery', 'Ortho Ward', 'Ortho', 'Orthopedic'];
                 $activeQuery->where(function($q) use ($orWards) {
+                    $q->where('requires_or', true);
                     foreach ($orWards as $w) {
                         $q->orWhere('room_ward', 'like', "%{$w}%");
                     }
                 });
                 $completedQuery->where(function($q) use ($orWards) {
+                    $q->where('requires_or', true);
                     foreach ($orWards as $w) {
                         $q->orWhere('room_ward', 'like', "%{$w}%");
                     }
                 });
+            } elseif ($deptUpper === 'NICU' || str_contains($deptUpper, 'NEONATAL')) {
+                $activeQuery->where('requires_nicu', true);
+                $completedQuery->where('requires_nicu', true);
             } elseif ($deptUpper === 'LR/DR' || $deptUpper === 'LR / DR' || $deptUpper === 'LR' || $deptUpper === 'DR' || $deptUpper === 'DELIVERY ROOM') {
                 $lrWards = ['OB Ward', 'OB', 'Obstetrics', 'OB-GYN'];
                 $activeQuery->where(function($q) use ($lrWards) {
@@ -188,6 +193,52 @@ Route::middleware(['auth', 'verified'])->group(function () {
         $activeQueue = $wardTransactions->where('overall_status', 'Routing in Progress')->values();
         $clearedQueue = $wardTransactions->where('overall_status', 'Cleared')->values();
 
+        // Incoming NICU Clearances when logged into NICU Ward
+        $incomingNicuPending = [];
+        $incomingNicuHistory = [];
+        $isNicuStation = strtoupper(trim($user->department ?? '')) === 'NICU' || str_contains(strtolower($user->department ?? ''), 'neonatal');
+        if ($isNicuStation) {
+            $nicuClearedLogs = \App\Models\ClearanceLog::whereRaw("UPPER(TRIM(department)) = 'NICU'")
+                ->orderBy('created_at', 'desc')
+                ->get()
+                ->keyBy('enccode');
+            $nicuClearedEnccodes = $nicuClearedLogs->keys()->toArray();
+
+            $incomingNicuPending = \App\Models\ClearanceTransaction::where('requires_nicu', true)
+                ->where('room_ward', '!=', $user->department)
+                ->whereNotIn('overall_status', ['Cleared', 'Cancelled', 'Archived'])
+                ->whereNotIn('enccode', $nicuClearedEnccodes)
+                ->orderBy('created_at', 'desc')
+                ->get()
+                ->map(fn($txn) => [
+                    'enccode' => $txn->enccode,
+                    'hospital_number' => $txn->hospital_number,
+                    'name' => $txn->patient_name,
+                    'ward' => $txn->room_ward,
+                    'disposition' => $txn->disposition,
+                    'status' => $txn->overall_status,
+                    'date' => $txn->created_at->toIso8601String(),
+                ])
+                ->values();
+
+            $incomingNicuHistory = \App\Models\ClearanceTransaction::where('requires_nicu', true)
+                ->where('room_ward', '!=', $user->department)
+                ->where('overall_status', '!=', 'Cancelled')
+                ->whereIn('enccode', $nicuClearedEnccodes)
+                ->orderBy('updated_at', 'desc')
+                ->get()
+                ->map(fn($txn) => [
+                    'enccode' => $txn->enccode,
+                    'hospital_number' => $txn->hospital_number,
+                    'name' => $txn->patient_name,
+                    'ward' => $txn->room_ward,
+                    'disposition' => $txn->disposition,
+                    'overall_status' => $txn->overall_status,
+                    'cleared_date' => $nicuClearedLogs[$txn->enccode]->created_at->toIso8601String(),
+                ])
+                ->values();
+        }
+
         if ($search) {
             $encounter = DB::connection('ihomis')->table('henctr')
                 ->join('hperson', 'henctr.hpercode', '=', 'hperson.hpercode')
@@ -213,6 +264,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
                         ? date('Y-m-d\TH:i', strtotime($transaction->arrival_datetime)) 
                         : '',
                     'disposition' => $transaction ? $transaction->disposition : '',
+                    'requires_or' => (bool) ($transaction->requires_or ?? false),
+                    'requires_nicu' => (bool) ($transaction->requires_nicu ?? false),
                 ];
 
                 $clearances = \App\Models\ClearanceLog::where('enccode', $encounter->enccode)
@@ -226,7 +279,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
             'patient' => $patient,
             'clearances' => $clearances,
             'activeQueue' => $activeQueue,
-            'clearedQueue' => $clearedQueue, 
+            'clearedQueue' => $clearedQueue,
+            'incomingNicuPending' => $incomingNicuPending,
+            'incomingNicuHistory' => $incomingNicuHistory,
         ]);
         
     })->name('dashboard');
@@ -243,6 +298,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::delete('/admin/departments/{id}', [AdminController::class, 'deleteDepartment'])->name('admin.departments.destroy');
 
     Route::put('/admin/transactions/{id}', [AdminController::class, 'updateTransaction'])->name('admin.transactions.update');
+    Route::post('/admin/transactions/{id}/clear-all', [AdminController::class, 'clearAllCostCenters'])->name('admin.transactions.clear-all');
     Route::post('/admin/transactions/{id}/cancel', [AdminController::class, 'cancelTransaction'])->name('admin.transactions.cancel');
     Route::post('/admin/transactions/{id}/reactivate', [AdminController::class, 'reactivateTransaction'])->name('admin.transactions.reactivate');
     Route::delete('/admin/transactions/{id}', [AdminController::class, 'deleteTransaction'])->name('admin.transactions.destroy');

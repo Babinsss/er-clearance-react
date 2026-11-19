@@ -94,6 +94,8 @@ class SupervisorController extends Controller
             'is_oecb' => 'nullable|boolean',
             'has_oxygen' => 'nullable|boolean',
             'oxygen_remarks' => 'nullable|string',
+            'requires_or' => 'nullable|boolean',
+            'requires_nicu' => 'nullable|boolean',
         ]);
 
         $tx = ClearanceTransaction::findOrFail($id);
@@ -103,6 +105,15 @@ class SupervisorController extends Controller
             : null;
 
         $newStatus = $validated['overall_status'];
+
+        $wardDept = strtolower(trim($validated['room_ward']));
+        $isErWard = $wardDept === 'emergency room' || $wardDept === 'er' || str_contains($wardDept, 'emergency');
+        $isOutpatientWard = str_contains($wardDept, 'outpatient') || 
+                            str_contains($wardDept, 'opd') || 
+                            str_contains($wardDept, 'hemodialysis') || 
+                            str_contains($wardDept, 'dialysis') || 
+                            str_contains($wardDept, 'hdu');
+        $allowsAdditionalClearance = !$isErWard && !$isOutpatientWard;
 
         $tx->update([
             'hospital_number' => $validated['hospital_number'],
@@ -114,16 +125,11 @@ class SupervisorController extends Controller
             'is_oecb' => (bool) ($validated['is_oecb'] ?? false),
             'has_oxygen' => (bool) ($validated['has_oxygen'] ?? false),
             'oxygen_remarks' => ($validated['has_oxygen'] ?? false) ? $validated['oxygen_remarks'] : null,
+            'requires_or' => $allowsAdditionalClearance && (bool) ($validated['requires_or'] ?? false),
+            'requires_nicu' => $allowsAdditionalClearance && (bool) ($validated['requires_nicu'] ?? false),
         ]);
 
         // When room_ward is changed to an Outpatient ward, auto-clear standard departments
-        $wardDept = strtolower(trim($validated['room_ward']));
-        $isOutpatientWard = str_contains($wardDept, 'outpatient') || 
-                            str_contains($wardDept, 'opd') || 
-                            str_contains($wardDept, 'hemodialysis') || 
-                            str_contains($wardDept, 'dialysis') || 
-                            str_contains($wardDept, 'hdu');
-
         if ($isOutpatientWard) {
             $autoDepts = ['Pharmacy', 'Laboratory', 'Radiology', 'Cardio Pulmo', 'CSR'];
             foreach ($autoDepts as $d) {

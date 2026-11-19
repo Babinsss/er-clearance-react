@@ -4,6 +4,7 @@ import PortalLayout from '@/Layouts/PortalLayout';
 import TurnaroundChart from '@/Components/TurnaroundChart'; // <-- IMPORTED CHART
 import Modal from '@/Components/Modal';
 import ConfirmDialog from '@/Components/ConfirmDialog';
+import { supportsAdditionalClearance } from '@/utils/clearanceRouting';
 
 export default function AdminDashboard({ staff = [], departments = [], transactions = [] }) {
     // Default to analytics tab so the chart is the first thing the Admin sees
@@ -85,7 +86,9 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
         overall_status: 'Routing in Progress',
         is_oecb: false,
         has_oxygen: false,
-        oxygen_remarks: ''
+        oxygen_remarks: '',
+        requires_or: false,
+        requires_nicu: false,
     });
     const [isSavingPatient, setIsSavingPatient] = useState(false);
 
@@ -130,6 +133,26 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
     };
 
     // --- PATIENT ROUTING HANDLERS ---
+    const handleClearAllCostCenters = (id, name) => {
+        setConfirmState({
+            title: 'Auto-Clear All Cost Centers',
+            message: `Automatically mark ALL required cost centers as CLEARED for ${name}?\n\nExisting cleared stations will keep their original timestamps, and all remaining pending stations will be cleared immediately.`,
+            confirmLabel: 'Yes, Clear All Stations',
+            tone: 'teal',
+            onConfirm: () => {
+                setIsConfirmRunning(true);
+                router.post(`/admin/transactions/${id}/clear-all`, {}, {
+                    preserveScroll: true,
+                    onSuccess: () => {
+                        setConfirmState(null);
+                        showToast(`All cost centers for ${name} have been cleared.`);
+                    },
+                    onFinish: () => setIsConfirmRunning(false),
+                });
+            },
+        });
+    };
+
     const handleCancelPatient = (id, name) => {
         setConfirmState({
             title: 'Cancel Clearance Routing',
@@ -210,7 +233,9 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
             overall_status: tx.overall_status || 'Routing in Progress',
             is_oecb: Boolean(tx.is_oecb),
             has_oxygen: Boolean(tx.has_oxygen),
-            oxygen_remarks: tx.oxygen_remarks || ''
+            oxygen_remarks: tx.oxygen_remarks || '',
+            requires_or: Boolean(tx.requires_or),
+            requires_nicu: Boolean(tx.requires_nicu),
         });
     };
 
@@ -224,6 +249,8 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
             is_oecb: Boolean(patientEditForm.is_oecb),
             has_oxygen: Boolean(patientEditForm.has_oxygen),
             oxygen_remarks: patientEditForm.has_oxygen ? patientEditForm.oxygen_remarks : null,
+            requires_or: Boolean(patientEditForm.requires_or),
+            requires_nicu: Boolean(patientEditForm.requires_nicu),
         }, {
             preserveScroll: true,
             onSuccess: () => {
@@ -563,6 +590,16 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
                                                                     Oxygen
                                                                 </span>
                                                             ) : null}
+                                                            {tx.requires_or ? (
+                                                                <span className="bg-teal-100 text-teal-800 text-[11px] font-bold px-1.5 py-0.5 rounded border border-teal-300">
+                                                                    + OR
+                                                                </span>
+                                                            ) : null}
+                                                            {tx.requires_nicu ? (
+                                                                <span className="bg-sky-100 text-sky-800 text-[11px] font-bold px-1.5 py-0.5 rounded border border-sky-300">
+                                                                    Baby · NICU
+                                                                </span>
+                                                            ) : null}
                                                         </div>
                                                     </td>
                                                     <td className="p-4">
@@ -617,14 +654,26 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
                                                                 <span>Edit</span>
                                                             </button>
                                                             {tx.overall_status === 'Routing in Progress' && (
-                                                                <button
-                                                                    onClick={() => handleCancelPatient(tx.id, tx.patient_name)}
-                                                                    className="bg-rose-50 hover:bg-rose-100 text-rose-600 hover:text-rose-700 border border-rose-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center space-x-1"
-                                                                    title="Cancel clearance routing for this patient"
-                                                                >
-                                                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                                                                    <span>Cancel Routing</span>
-                                                                </button>
+                                                                <>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => handleClearAllCostCenters(tx.id, tx.patient_name)}
+                                                                        className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 hover:text-emerald-800 border border-emerald-300 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center space-x-1"
+                                                                        title="Automatically clear all required cost centers for this patient"
+                                                                    >
+                                                                        <svg className="w-3.5 h-3.5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7"></path></svg>
+                                                                        <span>Clear All</span>
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => handleCancelPatient(tx.id, tx.patient_name)}
+                                                                        className="bg-rose-50 hover:bg-rose-100 text-rose-600 hover:text-rose-700 border border-rose-200 px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center space-x-1"
+                                                                        title="Cancel clearance routing for this patient"
+                                                                    >
+                                                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                                                        <span>Cancel Routing</span>
+                                                                    </button>
+                                                                </>
                                                             )}
                                                             {tx.overall_status === 'Cancelled' && (
                                                                 <button
@@ -971,7 +1020,7 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
 
                                 <div>
                                     <label className="block text-xs font-bold text-slate-600 uppercase mb-1">
-                                        Arrival Date & Time
+                                        {supportsAdditionalClearance(patientEditForm.room_ward) ? 'Date Admitted' : 'Arrival Date & Time'}
                                     </label>
                                     <input
                                         type="datetime-local"
@@ -1091,6 +1140,53 @@ export default function AdminDashboard({ staff = [], departments = [], transacti
                                         </div>
                                     )}
                                 </div>
+
+                                {supportsAdditionalClearance(patientEditForm.room_ward) && (
+                                <div className="pt-3 border-t border-slate-200">
+                                    <label className="block text-xs font-bold text-slate-600 uppercase mb-2">
+                                        Additional Clearance Stations
+                                    </label>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                        <button
+                                            type="button"
+                                            aria-pressed={Boolean(patientEditForm.requires_or)}
+                                            onClick={() => setPatientEditForm({ ...patientEditForm, requires_or: !patientEditForm.requires_or })}
+                                            className={`flex items-center justify-between px-3 py-2.5 rounded-lg border text-left transition-all ${
+                                                patientEditForm.requires_or
+                                                    ? 'bg-teal-50 border-teal-500 text-teal-900 ring-1 ring-teal-500'
+                                                    : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'
+                                            }`}
+                                        >
+                                            <div>
+                                                <div className="text-xs font-extrabold uppercase">Clear in OR</div>
+                                                <div className="text-[11px] text-slate-500">Operating Room clearance</div>
+                                            </div>
+                                            <span className={`text-[11px] font-black px-2 py-0.5 rounded ${patientEditForm.requires_or ? 'bg-teal-600 text-white' : 'bg-slate-200 text-slate-600'}`}>
+                                                {patientEditForm.requires_or ? 'ON' : 'OFF'}
+                                            </span>
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            aria-pressed={Boolean(patientEditForm.requires_nicu)}
+                                            onClick={() => setPatientEditForm({ ...patientEditForm, requires_nicu: !patientEditForm.requires_nicu })}
+                                            className={`flex items-center justify-between px-3 py-2.5 rounded-lg border text-left transition-all ${
+                                                patientEditForm.requires_nicu
+                                                    ? 'bg-sky-50 border-sky-500 text-sky-900 ring-1 ring-sky-500'
+                                                    : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'
+                                            }`}
+                                        >
+                                            <div>
+                                                <div className="text-xs font-extrabold uppercase">Baby · NICU Clearance</div>
+                                                <div className="text-[11px] text-slate-500">Requires NICU clearance</div>
+                                            </div>
+                                            <span className={`text-[11px] font-black px-2 py-0.5 rounded ${patientEditForm.requires_nicu ? 'bg-sky-600 text-white' : 'bg-slate-200 text-slate-600'}`}>
+                                                {patientEditForm.requires_nicu ? 'ON' : 'OFF'}
+                                            </span>
+                                        </button>
+                                    </div>
+                                </div>
+                                )}
                             </div>
 
                             {/* Modal Footer */}

@@ -20,6 +20,15 @@ class ClearanceTransaction extends Model
         'is_oecb',
         'has_oxygen',
         'oxygen_remarks',
+        'requires_or',
+        'requires_nicu',
         'encoded_by',
+    ];
+
+    protected $casts = [
+        'is_oecb' => 'boolean',
+        'has_oxygen' => 'boolean',
+        'requires_or' => 'boolean',
+        'requires_nicu' => 'boolean',
     ];
 }

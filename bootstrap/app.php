@@ -12,10 +12,16 @@ use Illuminate\Support\Env;
 // Prevent thread-unsafe putenv() collisions across Laragon Apache virtual hosts
 Env::disablePutenv();
 
-$envRepo = RepositoryBuilder::createWithNoAdapters()
+$isTestingEnv = ($_ENV['APP_ENV'] ?? $_SERVER['APP_ENV'] ?? null) === 'testing';
+$envRepoBuilder = RepositoryBuilder::createWithNoAdapters()
     ->addAdapter(EnvConstAdapter::class)
-    ->addAdapter(ServerConstAdapter::class)
-    ->make(); // Mutable repository so this project's .env always overrides inherited process env vars
+    ->addAdapter(ServerConstAdapter::class);
+
+if ($isTestingEnv) {
+    $envRepoBuilder = $envRepoBuilder->immutable();
+}
+
+$envRepo = $envRepoBuilder->make(); // Mutable in web/CLI so .env overrides inherited Laragon vars; immutable in tests
 
 Dotenv::create($envRepo, dirname(__DIR__))->safeLoad();
 

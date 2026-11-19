@@ -2,10 +2,25 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Head, router, usePage } from '@inertiajs/react';
 import PortalLayout from '@/Layouts/PortalLayout';
 import Modal from '@/Components/Modal';
+import ConfirmDialog from '@/Components/ConfirmDialog';
+import axios from 'axios';
+import { getRequiredDepartments, isDepartmentCleared, supportsAdditionalClearance } from '@/utils/clearanceRouting';
 
-export default function Ward({ searchQuery, patient, clearances, activeQueue = [], clearedQueue = [] }) {
+export default function Ward({
+    searchQuery,
+    patient,
+    clearances,
+    activeQueue = [],
+    clearedQueue = [],
+    incomingNicuPending = [],
+    incomingNicuHistory = [],
+}) {
     const { auth } = usePage().props;
     const wardName = auth.user.department;
+    const wardLower = (wardName || '').toLowerCase().trim();
+    const isSurgOrthoWard = wardLower.includes('ortho') || wardLower.includes('surg');
+    const isNicuStation = wardLower === 'nicu' || wardLower.includes('neonatal');
+    const showAdditionalClearance = supportsAdditionalClearance(wardName);
 
     const [activeTab, setActiveTab] = useState('active');
     const [queueSearch, setQueueSearch] = useState('');
@@ -14,6 +29,9 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
     const [toastMessage, setToastMessage] = useState(null);
     const [showOxygenModal, setShowOxygenModal] = useState(false);
     const [highlightedEnccode, setHighlightedEnccode] = useState(null);
+    const [nicuInspectModal, setNicuInspectModal] = useState({ open: false, patient: null, orders: [], loading: false });
+    const [nicuClearTarget, setNicuClearTarget] = useState(null);
+    const [isClearingNicu, setIsClearingNicu] = useState(false);
 
     const previousClearedCount = useRef(clearedQueue.length);
     const cardRefs = useRef({});
@@ -28,38 +46,21 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
         disposition: patient?.disposition || '',
         is_oecb: '', // Blank by default to force a Yes/No choice
         has_oxygen: '', 
-        oxygen_remarks: ''
+        oxygen_remarks: '',
+        requires_or: false,
+        requires_nicu: false,
     });
 
-    const getRequiredDepartments = (wardStr) => {
-        const base = ['Pharmacy', 'Laboratory', 'Radiology', 'Cardio Pulmo', 'CSR'];
-        const ward = (wardStr || '').toLowerCase();
-        const isEr = ward === 'emergency room' || ward === 'er' || ward.includes('emergency');
-        const isOutpatient = ward.includes('outpatient') || ward.includes('opd') || ward.includes('hemodialysis') || ward.includes('dialysis') || ward.includes('hdu');
-        const isAdmitted = !isEr && !isOutpatient;
-
-        const depts = [...base];
-
-        if (isAdmitted) {
-            depts.push('Credit and Collection');
-        }
-        
-        if (ward.includes('ortho') || ward.includes('surg')) {
-            depts.push('OR');
-        } else if (ward.includes('ob')) {
-            depts.push('LR/DR');
-        } else if (isOutpatient) {
-            depts.push('HDU');
-        }
-        return depts;
-    };
-
     useEffect(() => {
+        const reloadKeys = isNicuStation
+            ? ['activeQueue', 'clearedQueue', 'patient', 'clearances', 'incomingNicuPending', 'incomingNicuHistory']
+            : ['activeQueue', 'clearedQueue', 'patient', 'clearances'];
+
         if (window.Echo) {
             window.Echo.channel('clearance-updates')
                 .listen('PatientRouted', (e) => { 
                     router.reload({ 
-                        only: ['activeQueue', 'clearedQueue', 'patient', 'clearances'], 
+                        only: reloadKeys, 
                         preserveScroll: true, 
                         preserveState: true 
                     });
@@ -68,7 +69,7 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
 
         const pollInterval = setInterval(() => {
             router.reload({ 
-                only: ['activeQueue', 'clearedQueue', 'patient', 'clearances'], 
+                only: reloadKeys, 
                 preserveScroll: true, 
                 preserveState: true 
             });
@@ -83,7 +84,7 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
             clearInterval(pollInterval);
             if (window.Echo) window.Echo.leaveChannel('clearance-updates');
         };
-    }, [clearedQueue]);
+    }, [clearedQueue, isNicuStation]);
 
     useEffect(() => {
         if (form.hospital_number.length > 5 && form.hospital_number !== searchQuery) {
@@ -112,7 +113,9 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                     disposition: patient.disposition || '',
                     is_oecb: '',
                     has_oxygen: '',
-                    oxygen_remarks: ''
+                    oxygen_remarks: '',
+                    requires_or: Boolean(patient.requires_or),
+                    requires_nicu: Boolean(patient.requires_nicu),
                 }));
                 prevPatientCode.current = patient.enccode;
                 setIsSearching(false);
@@ -126,7 +129,9 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                     disposition: '',
                     is_oecb: '',
                     has_oxygen: '',
-                    oxygen_remarks: ''
+                    oxygen_remarks: '',
+                    requires_or: false,
+                    requires_nicu: false,
                 }));
             }
             prevPatientCode.current = null;
@@ -163,13 +168,25 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
             room_ward: wardName,
             is_oecb: form.is_oecb === 'Yes', // Converts "Yes" to true for the database
             has_oxygen: form.has_oxygen === 'Yes',
-            oxygen_remarks: form.oxygen_remarks
+            oxygen_remarks: form.oxygen_remarks,
+            requires_or: showAdditionalClearance && Boolean(form.requires_or),
+            requires_nicu: showAdditionalClearance && Boolean(form.requires_nicu),
         }, {
             preserveScroll: true,
             onSuccess: () => {
                 setIsRouting(false);
                 prevPatientCode.current = null; // Clears the tracker for the next patient
-                setForm({ hospital_number: '', patient_name: '', arrival_datetime: '', disposition: '', is_oecb: '', has_oxygen: '', oxygen_remarks: '' });
+                setForm({
+                    hospital_number: '',
+                    patient_name: '',
+                    arrival_datetime: '',
+                    disposition: '',
+                    is_oecb: '',
+                    has_oxygen: '',
+                    oxygen_remarks: '',
+                    requires_or: false,
+                    requires_nicu: false,
+                });
                 setToastMessage("Patient successfully routed for clearance!");
                 setTimeout(() => setToastMessage(null), 3000);
             },
@@ -213,6 +230,43 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                 el.scrollIntoView({ behavior: 'smooth', block: 'center' });
             }
         }, 80);
+    };
+
+    const openNicuInspect = async (item) => {
+        setNicuInspectModal({ open: true, patient: item, orders: [], loading: true });
+        try {
+            const res = await axios.get(`/clearance-data/fetch?enccode=${encodeURIComponent(item.enccode)}`, {
+                headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+            });
+            const payload = res.data?.props || res.data?.data || res.data || {};
+            setNicuInspectModal({ open: true, patient: item, orders: payload.nicuOrders || [], loading: false });
+        } catch (err) {
+            setNicuInspectModal({ open: true, patient: item, orders: [], loading: false });
+        }
+    };
+
+    const executeClearNicu = () => {
+        if (!nicuClearTarget) return;
+        setIsClearingNicu(true);
+        router.post('/clearance', {
+            enccode: nicuClearTarget.enccode,
+            department: 'NICU',
+        }, {
+            preserveScroll: true,
+            onSuccess: () => {
+                setIsClearingNicu(false);
+                setNicuClearTarget(null);
+                setNicuInspectModal({ open: false, patient: null, orders: [], loading: false });
+                setToastMessage('NICU clearance recorded!');
+                setTimeout(() => setToastMessage(null), 3000);
+            },
+            onError: () => {
+                setIsClearingNicu(false);
+                setNicuClearTarget(null);
+                setToastMessage('Failed to clear NICU station. Please try again.');
+                setTimeout(() => setToastMessage(null), 4000);
+            },
+        });
     };
 
     return (
@@ -273,7 +327,9 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                         </div>
 
                         <div>
-                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Arrival Time</label>
+                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">
+                                {showAdditionalClearance ? 'Date Admitted' : 'Arrival Time'}
+                            </label>
                             <input 
                                 type="datetime-local" 
                                 value={form.arrival_datetime}
@@ -375,6 +431,90 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                             </div>
                         )}
 
+                        {/* ADDITIONAL CLEARANCE TOGGLES FOR ADMITTED WARDS (EXCLUDES ER & OUTPATIENT) */}
+                        {showAdditionalClearance && (
+                        <div className="bg-slate-50 p-3.5 rounded-lg border border-slate-200 space-y-2.5">
+                            <div className="flex items-center justify-between">
+                                <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                                    Additional Clearance
+                                </span>
+                                <span className="text-[10px] font-semibold text-slate-400 uppercase">
+                                    Optional
+                                </span>
+                            </div>
+
+                            {/* OR CLEARANCE TOGGLE */}
+                            <button
+                                type="button"
+                                disabled={isSurgOrthoWard}
+                                aria-pressed={isSurgOrthoWard ? true : Boolean(form.requires_or)}
+                                onClick={() => setForm(prev => ({ ...prev, requires_or: !prev.requires_or }))}
+                                className={`w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg border text-left transition-all ${
+                                    isSurgOrthoWard
+                                        ? 'bg-teal-50/70 border-teal-200 text-teal-800 cursor-default'
+                                        : form.requires_or
+                                            ? 'bg-teal-50 border-teal-500 text-teal-900 ring-1 ring-teal-500 shadow-sm'
+                                            : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'
+                                }`}
+                            >
+                                <div className="min-w-0">
+                                    <div className="text-xs font-extrabold uppercase tracking-wide flex items-center gap-1.5">
+                                        <span>Clear in OR</span>
+                                        {isSurgOrthoWard && (
+                                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-teal-100 text-teal-700">Default</span>
+                                        )}
+                                    </div>
+                                    <p className="text-[11px] text-slate-500 leading-tight mt-0.5">
+                                        {isSurgOrthoWard ? 'Included automatically for this ward' : 'Operating Room clearance (e.g. C-Section / Surgery)'}
+                                    </p>
+                                </div>
+                                <span
+                                    aria-hidden="true"
+                                    className={`shrink-0 inline-flex items-center w-10 h-5 rounded-full p-0.5 transition-colors ${
+                                        (isSurgOrthoWard || form.requires_or) ? 'bg-teal-600 justify-end' : 'bg-slate-300 justify-start'
+                                    }`}
+                                >
+                                    <span className="w-4 h-4 rounded-full bg-white shadow-sm"></span>
+                                </span>
+                            </button>
+
+                            {/* BABY / NICU CLEARANCE TOGGLE */}
+                            <button
+                                type="button"
+                                disabled={isNicuStation}
+                                aria-pressed={isNicuStation ? true : Boolean(form.requires_nicu)}
+                                onClick={() => setForm(prev => ({ ...prev, requires_nicu: !prev.requires_nicu }))}
+                                className={`w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg border text-left transition-all ${
+                                    isNicuStation
+                                        ? 'bg-sky-50/70 border-sky-200 text-sky-800 cursor-default'
+                                        : form.requires_nicu
+                                            ? 'bg-sky-50 border-sky-500 text-sky-900 ring-1 ring-sky-500 shadow-sm'
+                                            : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'
+                                }`}
+                            >
+                                <div className="min-w-0">
+                                    <div className="text-xs font-extrabold uppercase tracking-wide flex items-center gap-1.5">
+                                        <span>Baby · NICU Clearance</span>
+                                        {isNicuStation && (
+                                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-sky-100 text-sky-700">Current</span>
+                                        )}
+                                    </div>
+                                    <p className="text-[11px] text-slate-500 leading-tight mt-0.5">
+                                        {isNicuStation ? 'Originating from NICU ward' : 'Toggle if patient is a Baby requiring NICU clearance'}
+                                    </p>
+                                </div>
+                                <span
+                                    aria-hidden="true"
+                                    className={`shrink-0 inline-flex items-center w-10 h-5 rounded-full p-0.5 transition-colors ${
+                                        (isNicuStation || form.requires_nicu) ? 'bg-sky-600 justify-end' : 'bg-slate-300 justify-start'
+                                    }`}
+                                >
+                                    <span className="w-4 h-4 rounded-full bg-white shadow-sm"></span>
+                                </span>
+                            </button>
+                        </div>
+                        )}
+
                         <div className="pt-2 mt-6 border-t border-slate-100">
                             {patient?.is_routed ? (
                                 <div className="space-y-2.5">
@@ -459,7 +599,7 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                                 )}
                             </div>
 
-                            <div className="flex p-1 bg-slate-200/60 rounded-lg shadow-inner shrink-0">
+                            <div className="flex p-1 bg-slate-200/60 rounded-lg shadow-inner shrink-0 flex-wrap gap-1">
                                 <button 
                                     type="button"
                                     onClick={() => setActiveTab('active')} 
@@ -475,12 +615,103 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                                 >
                                     Completed History
                                 </button>
+                                {isNicuStation && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setActiveTab('nicu')}
+                                        className={`px-4 py-1.5 text-sm font-bold rounded-md transition-all ${activeTab === 'nicu' ? 'bg-white text-sky-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                                    >
+                                        NICU Clearances
+                                        {incomingNicuPending.length > 0 && (
+                                            <span className="ml-1.5 bg-sky-600 text-white text-[11px] px-1.5 py-0.5 rounded-full">{incomingNicuPending.length}</span>
+                                        )}
+                                    </button>
+                                )}
                             </div>
                         </div>
                     </div>
 
                     <div className="overflow-y-auto flex-1 p-6 space-y-4 bg-slate-50/50">
-                        {filteredDisplayQueue.length === 0 ? (
+                        {activeTab === 'nicu' && isNicuStation ? (
+                            <div className="space-y-6">
+                                <div>
+                                    <h4 className="text-xs font-black text-slate-500 uppercase tracking-wider mb-3">
+                                        Pending Babies Requiring NICU Clearance ({incomingNicuPending.length})
+                                    </h4>
+                                    {incomingNicuPending.length === 0 ? (
+                                        <div className="bg-white border border-slate-200 rounded-xl p-8 text-center text-sm text-slate-500">
+                                            No pending NICU clearance requests from other wards.
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-3">
+                                            {incomingNicuPending
+                                                .filter((item) => !trimmedQueueSearch ||
+                                                    (item.name || '').toLowerCase().includes(trimmedQueueSearch) ||
+                                                    (item.hospital_number || '').toLowerCase().includes(trimmedQueueSearch) ||
+                                                    (item.ward || '').toLowerCase().includes(trimmedQueueSearch))
+                                                .map((item) => (
+                                                    <div key={item.enccode} className="bg-white border border-sky-200 rounded-xl p-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                                                        <div>
+                                                            <div className="flex flex-wrap items-center gap-2">
+                                                                <span className="font-bold text-slate-800 text-base">{item.name}</span>
+                                                                <span className="text-xs font-mono text-slate-500 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded">{item.hospital_number}</span>
+                                                                <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-sky-100 text-sky-800 border border-sky-200">{item.ward}</span>
+                                                            </div>
+                                                            <p className="text-xs text-slate-500 mt-1">
+                                                                Disposition: <span className="font-semibold text-slate-700">{item.disposition || 'N/A'}</span>
+                                                                {' · '}Routed {new Date(item.date).toLocaleString()}
+                                                            </p>
+                                                        </div>
+                                                        <div className="flex items-center gap-2 shrink-0">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => openNicuInspect(item)}
+                                                                className="px-3.5 py-2 text-xs font-bold bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-lg transition-colors"
+                                                            >
+                                                                Inspect Orders
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setNicuClearTarget(item)}
+                                                                className="px-4 py-2 text-xs font-bold bg-sky-600 hover:bg-sky-700 text-white rounded-lg shadow-sm transition-colors"
+                                                            >
+                                                                Clear NICU
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                        </div>
+                                    )}
+                                </div>
+
+                                {incomingNicuHistory.length > 0 && (
+                                    <div>
+                                        <h4 className="text-xs font-black text-slate-400 uppercase tracking-wider mb-3">
+                                            Recently Cleared by NICU ({incomingNicuHistory.length})
+                                        </h4>
+                                        <div className="space-y-2">
+                                            {incomingNicuHistory.slice(0, 15).map((item) => (
+                                                <div key={item.enccode} className="bg-white border border-emerald-200/80 rounded-xl px-4 py-3 flex items-center justify-between gap-3">
+                                                    <div>
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="font-bold text-slate-700 text-sm">{item.name}</span>
+                                                            <span className="text-[11px] font-mono text-slate-400">{item.hospital_number}</span>
+                                                            <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-600">{item.ward}</span>
+                                                        </div>
+                                                        <div className="text-[11px] text-slate-400 mt-0.5">
+                                                            Cleared {new Date(item.cleared_date).toLocaleString()}
+                                                        </div>
+                                                    </div>
+                                                    <span className="text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-md">
+                                                        ✓ NICU Cleared
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        ) : filteredDisplayQueue.length === 0 ? (
                             <div className="text-center py-12">
                                 <svg className="w-12 h-12 text-slate-200 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path></svg>
                                 {trimmedQueueSearch ? (
@@ -502,8 +733,14 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                             </div>
                         ) : (
                             filteredDisplayQueue.map((tx, idx) => {
-                                const requiredDepts = getRequiredDepartments(tx.room_ward);
-                                const gridColsClass = requiredDepts.length >= 7 ? 'md:grid-cols-4 lg:grid-cols-7' : requiredDepts.length === 6 ? 'md:grid-cols-3 lg:grid-cols-6' : 'md:grid-cols-5';
+                                const requiredDepts = getRequiredDepartments(tx.room_ward, Boolean(tx.requires_or), Boolean(tx.requires_nicu));
+                                const gridColsClass = requiredDepts.length >= 8
+                                    ? 'md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-8'
+                                    : requiredDepts.length === 7
+                                        ? 'md:grid-cols-4 lg:grid-cols-7'
+                                        : requiredDepts.length === 6
+                                            ? 'md:grid-cols-3 lg:grid-cols-6'
+                                            : 'md:grid-cols-5';
 
                                 return (
                                     <div
@@ -513,10 +750,16 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                                     >
                                         <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-3">
                                             <div>
-                                                <h4 className="font-bold text-slate-800 text-lg flex items-center gap-2">
+                                                <h4 className="font-bold text-slate-800 text-lg flex flex-wrap items-center gap-2">
                                                     {tx.patient_name}
                                                     {tx.is_oecb && (
                                                         <span className="bg-amber-100 text-amber-800 text-[11px] font-bold px-2 py-0.5 rounded border border-amber-300">OECB</span>
+                                                    )}
+                                                    {tx.requires_or && (
+                                                        <span className="bg-teal-100 text-teal-800 text-[11px] font-bold px-2 py-0.5 rounded border border-teal-300">+ OR</span>
+                                                    )}
+                                                    {tx.requires_nicu && (
+                                                        <span className="bg-sky-100 text-sky-800 text-[11px] font-bold px-2 py-0.5 rounded border border-sky-300">Baby · NICU</span>
                                                     )}
                                                     <span className="text-xs text-slate-400 font-mono border border-slate-200 px-2 py-0.5 rounded bg-slate-50">{tx.hospital_number}</span>
                                                 </h4>
@@ -545,17 +788,7 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
 
                                         <div className={`grid grid-cols-2 ${gridColsClass} gap-2`}>
                                             {requiredDepts.map((dept, i) => {
-                                                const isApproved = tx.cleared_departments?.some(d => {
-                                                    const cleanD = (d || '').toUpperCase().trim();
-                                                    const cleanTarget = dept.toUpperCase().trim();
-                                                    if (cleanD === cleanTarget) return true;
-                                                    if (cleanTarget === 'CREDIT AND COLLECTION' && (cleanD.includes('CREDIT') || cleanD.includes('COLLECT'))) return true;
-                                                    if (cleanTarget === 'OR' && (cleanD === 'OR/LR/DR' || cleanD === 'OPERATING ROOM')) return true;
-                                                    if (cleanTarget === 'LR/DR' && (cleanD === 'OR/LR/DR' || cleanD === 'LR / DR' || cleanD === 'LR' || cleanD === 'DR' || cleanD === 'DELIVERY ROOM')) return true;
-                                                    if (cleanTarget === 'HDU' && (cleanD === 'HDU' || cleanD === 'CKD' || cleanD === 'DIALYSIS' || cleanD === 'DIALYSIS UNIT' || cleanD === 'HEMODIALYSIS')) return true;
-                                                    if (cleanTarget === 'CARDIO PULMO' && (cleanD.includes('CARDIO') || cleanD.includes('ECG'))) return true;
-                                                    return false;
-                                                });
+                                                const isApproved = isDepartmentCleared(tx.cleared_departments, dept);
                                                 
                                                 return (
                                                     <div key={i} className={`border rounded-lg p-2.5 text-center cursor-default transition-all duration-500 ${isApproved ? 'bg-emerald-50 border-emerald-300 shadow-sm' : 'bg-slate-50 border-slate-200'}`}>
@@ -634,6 +867,80 @@ export default function Ward({ searchQuery, patient, clearances, activeQueue = [
                     </div>
                 </div>
             </Modal>
+
+            {/* NICU ORDER INSPECTION MODAL */}
+            <Modal
+                show={nicuInspectModal.open}
+                onClose={() => setNicuInspectModal({ open: false, patient: null, orders: [], loading: false })}
+                maxWidth="lg"
+                zIndexClass="z-[350]"
+            >
+                <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+                    <div>
+                        <h3 className="text-base font-bold text-slate-800">
+                            NICU Clearance Inspection — {nicuInspectModal.patient?.name}
+                        </h3>
+                        <p className="text-xs text-slate-500">
+                            From {nicuInspectModal.patient?.ward} · Hosp #: {nicuInspectModal.patient?.hospital_number}
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        aria-label="Close modal"
+                        onClick={() => setNicuInspectModal({ open: false, patient: null, orders: [], loading: false })}
+                        className="text-slate-400 hover:text-slate-600 p-1 rounded-lg transition-colors"
+                    >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+                <div className="p-6 space-y-4">
+                    {nicuInspectModal.loading ? (
+                        <div className="text-sm text-slate-500 py-6 text-center">Loading iHOMIS records...</div>
+                    ) : nicuInspectModal.orders.length === 0 ? (
+                        <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 text-sm text-emerald-800 font-medium">
+                            No pending NICU-specific charges found in iHOMIS. Ready to clear if baby has no unsettled NICU items.
+                        </div>
+                    ) : (
+                        <div className="max-h-64 overflow-y-auto border border-slate-200 rounded-lg divide-y divide-slate-100">
+                            {nicuInspectModal.orders.map((ord, idx) => (
+                                <div key={idx} className="p-3 flex items-center justify-between text-xs">
+                                    <span className="font-semibold text-slate-700">{ord.item_description}</span>
+                                    <span className={`px-2 py-0.5 rounded font-bold ${ord.status === 'S' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                                        {ord.status === 'S' ? 'Served' : ord.status}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    <div className="flex justify-end gap-3 pt-2 border-t border-slate-100">
+                        <button
+                            type="button"
+                            onClick={() => setNicuInspectModal({ open: false, patient: null, orders: [], loading: false })}
+                            className="px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-lg"
+                        >
+                            Close
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setNicuClearTarget(nicuInspectModal.patient)}
+                            className="px-4 py-2 text-sm font-bold bg-sky-600 hover:bg-sky-700 text-white rounded-lg shadow-sm"
+                        >
+                            Clear NICU
+                        </button>
+                    </div>
+                </div>
+            </Modal>
+
+            <ConfirmDialog
+                show={Boolean(nicuClearTarget)}
+                onClose={() => { if (!isClearingNicu) setNicuClearTarget(null); }}
+                onConfirm={executeClearNicu}
+                title="Confirm NICU Clearance"
+                message={`Mark NICU clearance as CLEARED for ${nicuClearTarget?.name || 'this baby'} (from ${nicuClearTarget?.ward || 'ward'})?`}
+                confirmLabel="Yes, Clear NICU"
+                tone="teal"
+                loading={isClearingNicu}
+            />
 
             {toastMessage && (
                 <div className="fixed top-6 right-6 z-[200] flex items-center bg-teal-600 text-white px-5 py-3.5 rounded-xl shadow-2xl animate-slide-in-top motion-reduce:animate-none">

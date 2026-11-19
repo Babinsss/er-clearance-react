@@ -202,6 +202,8 @@ class AdminController extends Controller
             'is_oecb' => 'nullable|boolean',
             'has_oxygen' => 'nullable|boolean',
             'oxygen_remarks' => 'nullable|string',
+            'requires_or' => 'nullable|boolean',
+            'requires_nicu' => 'nullable|boolean',
         ]);
 
         $tx = \App\Models\ClearanceTransaction::findOrFail($id);
@@ -211,6 +213,15 @@ class AdminController extends Controller
             : null;
 
         $newStatus = $validated['overall_status'];
+
+        $wardDept = strtolower(trim($validated['room_ward']));
+        $isErWard = $wardDept === 'emergency room' || $wardDept === 'er' || str_contains($wardDept, 'emergency');
+        $isOutpatientWard = str_contains($wardDept, 'outpatient') || 
+                            str_contains($wardDept, 'opd') || 
+                            str_contains($wardDept, 'hemodialysis') || 
+                            str_contains($wardDept, 'dialysis') || 
+                            str_contains($wardDept, 'hdu');
+        $allowsAdditionalClearance = !$isErWard && !$isOutpatientWard;
 
         $tx->update([
             'hospital_number' => $validated['hospital_number'],
@@ -222,16 +233,11 @@ class AdminController extends Controller
             'is_oecb' => (bool) ($validated['is_oecb'] ?? false),
             'has_oxygen' => (bool) ($validated['has_oxygen'] ?? false),
             'oxygen_remarks' => ($validated['has_oxygen'] ?? false) ? $validated['oxygen_remarks'] : null,
+            'requires_or' => $allowsAdditionalClearance && (bool) ($validated['requires_or'] ?? false),
+            'requires_nicu' => $allowsAdditionalClearance && (bool) ($validated['requires_nicu'] ?? false),
         ]);
 
         // When room_ward is changed to an Outpatient ward, auto-clear standard departments
-        $wardDept = strtolower(trim($validated['room_ward']));
-        $isOutpatientWard = str_contains($wardDept, 'outpatient') || 
-                            str_contains($wardDept, 'opd') || 
-                            str_contains($wardDept, 'hemodialysis') || 
-                            str_contains($wardDept, 'dialysis') || 
-                            str_contains($wardDept, 'hdu');
-
         if ($isOutpatientWard) {
             $autoDepts = ['Pharmacy', 'Laboratory', 'Radiology', 'Cardio Pulmo', 'CSR'];
             foreach ($autoDepts as $d) {
@@ -247,6 +253,39 @@ class AdminController extends Controller
         } elseif ($newStatus !== 'Archived') {
             \App\Http\Controllers\ClearanceController::recalculateStatus($tx->enccode);
         }
+
+        return back();
+    }
+
+    public function clearAllCostCenters(Request $request, $id)
+    {
+        if ($request->user()->department !== 'ICT / Admin') abort(403);
+
+        $tx = \App\Models\ClearanceTransaction::findOrFail($id);
+
+        if ($tx->overall_status === 'Cancelled' || $tx->overall_status === 'Archived') {
+            return back();
+        }
+
+        $requiredDepartments = BillingController::getRequiredDepartmentsForWard(
+            $tx->room_ward,
+            (bool) $tx->requires_or,
+            (bool) $tx->requires_nicu
+        );
+
+        $existingLogs = ClearanceLog::where('enccode', $tx->enccode)->get();
+
+        foreach ($requiredDepartments as $dept) {
+            if (!BillingController::matchDepartmentLog($dept, $existingLogs)) {
+                ClearanceLog::create([
+                    'enccode' => $tx->enccode,
+                    'department' => $dept,
+                    'user_id' => $request->user()->id,
+                ]);
+            }
+        }
+
+        \App\Http\Controllers\ClearanceController::recalculateStatus($tx->enccode);
 
         return back();
     }

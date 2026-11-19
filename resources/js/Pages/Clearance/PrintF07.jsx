@@ -44,6 +44,9 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
             if (target === 'PHARMACY') {
                 return d.includes('PHARM');
             }
+            if (target === 'NICU') {
+                return d === 'NICU' || d === 'NICU WARD' || d.includes('NEONATAL');
+            }
             return d === target;
         });
         
@@ -90,12 +93,19 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
             const d = (l.department || '').toUpperCase().trim();
             return d === 'HDU' || d === 'CKD' || d.includes('DIALYSIS');
         });
+        const hasNicuLog = logs.some(l => {
+            const d = (l.department || '').toUpperCase().trim();
+            return d === 'NICU' || d === 'NICU WARD' || d.includes('NEONATAL');
+        });
 
-        if (isSurgOrOrtho || hasOrLog) {
+        if (isSurgOrOrtho || (isAdmitted && Boolean(transaction?.requires_or)) || hasOrLog) {
             depts.push('OR');
         }
         if (isOB || hasLrDrLog) {
             depts.push('LR/DR');
+        }
+        if ((isAdmitted && Boolean(transaction?.requires_nicu)) || hasNicuLog) {
+            depts.push('NICU');
         }
         if (isOutpatient || hasHduLog) {
             depts.push('HDU');
@@ -106,9 +116,11 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
 
     const printDepartments = getPrintDepartments();
     const dispositions = ['Improved', 'HAMA', 'Transferred', 'Died', 'Absconded'];
-    const rowClass = printDepartments.length >= 7 ? 'h-8 py-0.5' : printDepartments.length > 5 ? 'h-9 py-1' : 'h-11 py-2.5';
+    const rowClass = printDepartments.length >= 8 ? 'h-7 py-0.5' : printDepartments.length >= 7 ? 'h-8 py-0.5' : printDepartments.length > 5 ? 'h-9 py-1' : 'h-11 py-2.5';
 
-    // STAMP LOGIC
+    // STAMP LOGIC (Emergency Room only)
+    const txWard = (transaction?.room_ward || '').toLowerCase().trim();
+    const isErTransaction = txWard === 'emergency room' || txWard === 'er' || txWard.includes('emergency');
     const isOecb = Boolean(transaction?.is_oecb);
     const stampColor = isOecb ? '#e11d48' : '#64748b'; // Rose red for OECB, Slate gray for Non-OECB
     const stampText = isOecb ? 'OECB PATIENT' : 'NON-OECB';
@@ -204,21 +216,23 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
 
                     <div className="px-3 pb-2 border-b border-black shrink-0 relative">
                         
-                        {/* --- OECB STAMP OVERLAY --- */}
-                        <div 
-                            className="absolute z-10 font-black text-lg uppercase tracking-widest px-3 py-0.5 transform -rotate-6 rounded-sm shadow-sm"
-                            style={{ 
-                                top: '58px', 
-                                right: '8%', 
-                                border: `3px solid ${stampColor}`, 
-                                color: stampColor,
-                                backgroundColor: 'rgba(255, 255, 255, 0.85)',
-                                WebkitPrintColorAdjust: 'exact',
-                                printColorAdjust: 'exact'
-                            }}
-                        >
-                            {stampText}
-                        </div>
+                        {/* --- OECB STAMP OVERLAY (EMERGENCY ROOM ONLY) --- */}
+                        {isErTransaction && (
+                            <div 
+                                className="absolute z-10 font-black text-lg uppercase tracking-widest px-3 py-0.5 transform -rotate-6 rounded-sm shadow-sm"
+                                style={{ 
+                                    top: '58px', 
+                                    right: '8%', 
+                                    border: `3px solid ${stampColor}`, 
+                                    color: stampColor,
+                                    backgroundColor: 'rgba(255, 255, 255, 0.85)',
+                                    WebkitPrintColorAdjust: 'exact',
+                                    printColorAdjust: 'exact'
+                                }}
+                            >
+                                {stampText}
+                            </div>
+                        )}
 
                         <div className="flex items-end mb-3 gap-4">
                             <div className="flex flex-1 items-end">

@@ -20,18 +20,20 @@ class BillingController extends Controller
         'Credit and Collection',
         'HDU',
         'OR',
-        'LR/DR'
+        'LR/DR',
+        'NICU'
     ];
 
     /**
-     * Determine required cost centers for a given originating ward.
+     * Determine required cost centers for a given originating ward and optional routing toggles.
      */
-    public static function getRequiredDepartmentsForWard(?string $wardName): array
+    public static function getRequiredDepartmentsForWard(?string $wardName, bool $requiresOr = false, bool $requiresNicu = false): array
     {
         $wardStr = strtolower(trim($wardName ?? ''));
         $isEr = $wardStr === 'emergency room' || $wardStr === 'er' || str_contains($wardStr, 'emergency');
         $isSurgOrtho = str_contains($wardStr, 'ortho') || str_contains($wardStr, 'surg');
         $isOB = str_contains($wardStr, 'ob');
+        $isNicuWard = $wardStr === 'nicu' || str_contains($wardStr, 'neonatal');
         $isOutpatient = str_contains($wardStr, 'outpatient') || str_contains($wardStr, 'opd') || str_contains($wardStr, 'hemodialysis') || str_contains($wardStr, 'dialysis') || str_contains($wardStr, 'hdu');
 
         if ($isOutpatient) {
@@ -46,6 +48,17 @@ class BillingController extends Controller
             $required[] = 'OR';
         } elseif ($isOB) {
             $required[] = 'LR/DR';
+        }
+
+        // Additional optional clearances apply to admitted wards only (not ER or Outpatient)
+        if (!$isEr) {
+            if ($requiresOr && !in_array('OR', $required, true)) {
+                $required[] = 'OR';
+            }
+
+            if ($requiresNicu && !$isNicuWard && !in_array('NICU', $required, true)) {
+                $required[] = 'NICU';
+            }
         }
 
         return $required;
@@ -77,6 +90,9 @@ class BillingController extends Controller
             if ($reqUpper === 'CARDIO PULMO' && (str_contains($cleared, 'CARDIO') || str_contains($cleared, 'ECG'))) {
                 return $log;
             }
+            if ($reqUpper === 'NICU' && ($cleared === 'NICU' || $cleared === 'NICU WARD' || str_contains($cleared, 'NEONATAL'))) {
+                return $log;
+            }
         }
         return null;
     }
@@ -95,6 +111,7 @@ class BillingController extends Controller
             if ($cleanTarget === 'LR/DR' && ($cleanD === 'OR/LR/DR' || $cleanD === 'LR / DR' || $cleanD === 'LR' || $cleanD === 'DR' || $cleanD === 'DELIVERY ROOM')) return $cc;
             if ($cleanTarget === 'HDU' && ($cleanD === 'HDU' || $cleanD === 'CKD' || $cleanD === 'DIALYSIS' || $cleanD === 'DIALYSIS UNIT' || $cleanD === 'HEMODIALYSIS')) return $cc;
             if ($cleanTarget === 'CARDIO PULMO' && (str_contains($cleanD, 'CARDIO') || str_contains($cleanD, 'ECG'))) return $cc;
+            if ($cleanTarget === 'NICU' && ($cleanD === 'NICU' || $cleanD === 'NICU WARD' || str_contains($cleanD, 'NEONATAL'))) return $cc;
         }
         return null;
     }
@@ -143,7 +160,11 @@ class BillingController extends Controller
 
         $now = now();
         $formattedRouted = $routedTransactions->map(function ($tx) use ($routedLogs, $now) {
-            $reqDepts = self::getRequiredDepartmentsForWard($tx->room_ward);
+            $reqDepts = self::getRequiredDepartmentsForWard(
+                $tx->room_ward,
+                (bool) $tx->requires_or,
+                (bool) $tx->requires_nicu
+            );
             $pLogs = $routedLogs->get($tx->enccode, collect());
 
             $stationDetails = [];
@@ -202,6 +223,8 @@ class BillingController extends Controller
                 'is_oecb' => (bool) $tx->is_oecb,
                 'has_oxygen' => (bool) $tx->has_oxygen,
                 'oxygen_remarks' => $tx->oxygen_remarks,
+                'requires_or' => (bool) $tx->requires_or,
+                'requires_nicu' => (bool) $tx->requires_nicu,
                 'encoded_by' => $tx->encoded_by,
                 'routed_at' => $tx->created_at->toIso8601String(),
                 'created_at' => $tx->created_at->toIso8601String(),

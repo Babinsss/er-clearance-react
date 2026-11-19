@@ -3,6 +3,7 @@ import { Head, router, usePage } from '@inertiajs/react';
 import PortalLayout from '@/Layouts/PortalLayout';
 import Modal from '@/Components/Modal';
 import ConfirmDialog from '@/Components/ConfirmDialog';
+import { getRequiredDepartments, isDepartmentCleared, supportsAdditionalClearance } from '@/utils/clearanceRouting';
 
 export default function SupervisorDashboard({ transactions = [], wards = [] }) {
     const { auth } = usePage().props;
@@ -24,7 +25,9 @@ export default function SupervisorDashboard({ transactions = [], wards = [] }) {
         overall_status: 'Routing in Progress',
         is_oecb: false,
         has_oxygen: false,
-        oxygen_remarks: ''
+        oxygen_remarks: '',
+        requires_or: false,
+        requires_nicu: false,
     });
     const [isSaving, setIsSaving] = useState(false);
     const [formErrors, setFormErrors] = useState({});
@@ -80,30 +83,6 @@ export default function SupervisorDashboard({ transactions = [], wards = [] }) {
         setTimeout(() => setToastMessage(null), 3500);
     };
 
-    // Calculate required departments per ward
-    const getRequiredDepartments = (wardStr) => {
-        const base = ['Pharmacy', 'Laboratory', 'Radiology', 'Cardio Pulmo', 'CSR'];
-        const ward = (wardStr || '').toLowerCase();
-        const isEr = ward === 'emergency room' || ward === 'er' || ward.includes('emergency');
-        const isOutpatient = ward.includes('outpatient') || ward.includes('opd') || ward.includes('hemodialysis') || ward.includes('dialysis') || ward.includes('hdu');
-        const isAdmitted = !isEr && !isOutpatient;
-
-        const depts = [...base];
-
-        if (isAdmitted) {
-            depts.push('Credit and Collection');
-        }
-
-        if (ward.includes('ortho') || ward.includes('surg')) {
-            depts.push('OR');
-        } else if (ward.includes('ob')) {
-            depts.push('LR/DR');
-        } else if (isOutpatient) {
-            depts.push('HDU');
-        }
-        return depts;
-    };
-
     // Filtering logic
     const filteredTransactions = transactions.filter(tx => {
         const matchesStatus = activeTab === 'all' || tx.overall_status === activeTab;
@@ -148,7 +127,9 @@ export default function SupervisorDashboard({ transactions = [], wards = [] }) {
             overall_status: tx.overall_status || 'Routing in Progress',
             is_oecb: Boolean(tx.is_oecb),
             has_oxygen: Boolean(tx.has_oxygen),
-            oxygen_remarks: tx.oxygen_remarks || ''
+            oxygen_remarks: tx.oxygen_remarks || '',
+            requires_or: Boolean(tx.requires_or),
+            requires_nicu: Boolean(tx.requires_nicu),
         });
     };
 
@@ -163,6 +144,8 @@ export default function SupervisorDashboard({ transactions = [], wards = [] }) {
             is_oecb: Boolean(patientForm.is_oecb),
             has_oxygen: Boolean(patientForm.has_oxygen),
             oxygen_remarks: patientForm.has_oxygen ? patientForm.oxygen_remarks : null,
+            requires_or: Boolean(patientForm.requires_or),
+            requires_nicu: Boolean(patientForm.requires_nicu),
         }, {
             preserveScroll: true,
             onSuccess: () => {
@@ -383,7 +366,7 @@ export default function SupervisorDashboard({ transactions = [], wards = [] }) {
                                     </tr>
                                 ) : (
                                     filteredTransactions.map((tx) => {
-                                        const requiredDepts = getRequiredDepartments(tx.room_ward);
+                                        const requiredDepts = getRequiredDepartments(tx.room_ward, Boolean(tx.requires_or), Boolean(tx.requires_nicu));
 
                                         return (
                                             <tr key={tx.id} className="hover:bg-slate-50/80 transition-colors">
@@ -418,7 +401,7 @@ export default function SupervisorDashboard({ transactions = [], wards = [] }) {
                                                     )}
                                                     {tx.arrival_datetime && (
                                                         <span className="text-[11px] text-slate-500 block mt-0.5">
-                                                            Arrival: {new Date(tx.arrival_datetime).toLocaleDateString([], { month: 'short', day: 'numeric' })} {new Date(tx.arrival_datetime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                            {supportsAdditionalClearance(tx.room_ward) ? 'Admitted' : 'Arrival'}: {new Date(tx.arrival_datetime).toLocaleDateString([], { month: 'short', day: 'numeric' })} {new Date(tx.arrival_datetime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                                         </span>
                                                     )}
                                                 </td>
@@ -463,6 +446,16 @@ export default function SupervisorDashboard({ transactions = [], wards = [] }) {
                                                                 Oxygen {tx.oxygen_remarks ? `("${tx.oxygen_remarks}")` : ''}
                                                             </span>
                                                         ) : null}
+                                                        {tx.requires_or ? (
+                                                            <span className="bg-teal-100 text-teal-800 text-[11px] font-bold px-1.5 py-0.5 rounded border border-teal-300">
+                                                                + OR
+                                                            </span>
+                                                        ) : null}
+                                                        {tx.requires_nicu ? (
+                                                            <span className="bg-sky-100 text-sky-800 text-[11px] font-bold px-1.5 py-0.5 rounded border border-sky-300">
+                                                                Baby · NICU
+                                                            </span>
+                                                        ) : null}
                                                     </div>
                                                 </td>
 
@@ -470,17 +463,7 @@ export default function SupervisorDashboard({ transactions = [], wards = [] }) {
                                                 <td className="p-4 align-top">
                                                     <div className="flex flex-wrap gap-1 max-w-sm">
                                                         {requiredDepts.map((dept, i) => {
-                                                            const isCleared = tx.cleared_departments?.some(d => {
-                                                                const cleanD = (d || '').toUpperCase().trim();
-                                                                const cleanTarget = dept.toUpperCase().trim();
-                                                                if (cleanD === cleanTarget) return true;
-                                                                if (cleanTarget === 'CREDIT AND COLLECTION' && (cleanD.includes('CREDIT') || cleanD.includes('COLLECT'))) return true;
-                                                                if (cleanTarget === 'OR' && (cleanD === 'OR/LR/DR' || cleanD === 'OPERATING ROOM')) return true;
-                                                                if (cleanTarget === 'LR/DR' && (cleanD === 'OR/LR/DR' || cleanD === 'LR / DR' || cleanD === 'LR' || cleanD === 'DR' || cleanD === 'DELIVERY ROOM')) return true;
-                                                                if (cleanTarget === 'HDU' && (cleanD === 'HDU' || cleanD === 'CKD' || cleanD === 'DIALYSIS' || cleanD === 'DIALYSIS UNIT' || cleanD === 'HEMODIALYSIS')) return true;
-                                                                if (cleanTarget === 'CARDIO PULMO' && (cleanD.includes('CARDIO') || cleanD.includes('ECG'))) return true;
-                                                                return false;
-                                                            });
+                                                            const isCleared = isDepartmentCleared(tx.cleared_departments, dept);
 
                                                             return (
                                                                 <span
@@ -649,10 +632,10 @@ export default function SupervisorDashboard({ transactions = [], wards = [] }) {
                                     </p>
                                 </div>
 
-                                {/* Arrival Time */}
+                                {/* Arrival / Date Admitted */}
                                 <div>
                                     <label className="block text-xs font-bold text-slate-600 uppercase mb-1">
-                                        Arrival Date & Time
+                                        {supportsAdditionalClearance(patientForm.room_ward) ? 'Date Admitted' : 'Arrival Date & Time'}
                                     </label>
                                     <input
                                         type="datetime-local"
@@ -778,6 +761,53 @@ export default function SupervisorDashboard({ transactions = [], wards = [] }) {
                                         </div>
                                     )}
                                 </div>
+
+                                {supportsAdditionalClearance(patientForm.room_ward) && (
+                                <div className="pt-3 border-t border-slate-200">
+                                    <label className="block text-xs font-bold text-slate-600 uppercase mb-2">
+                                        Additional Clearance Stations
+                                    </label>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                        <button
+                                            type="button"
+                                            aria-pressed={Boolean(patientForm.requires_or)}
+                                            onClick={() => setPatientForm({ ...patientForm, requires_or: !patientForm.requires_or })}
+                                            className={`flex items-center justify-between px-3 py-2.5 rounded-lg border text-left transition-all ${
+                                                patientForm.requires_or
+                                                    ? 'bg-teal-50 border-teal-500 text-teal-900 ring-1 ring-teal-500'
+                                                    : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'
+                                            }`}
+                                        >
+                                            <div>
+                                                <div className="text-xs font-extrabold uppercase">Clear in OR</div>
+                                                <div className="text-[11px] text-slate-500">Operating Room clearance</div>
+                                            </div>
+                                            <span className={`text-[11px] font-black px-2 py-0.5 rounded ${patientForm.requires_or ? 'bg-teal-600 text-white' : 'bg-slate-200 text-slate-600'}`}>
+                                                {patientForm.requires_or ? 'ON' : 'OFF'}
+                                            </span>
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            aria-pressed={Boolean(patientForm.requires_nicu)}
+                                            onClick={() => setPatientForm({ ...patientForm, requires_nicu: !patientForm.requires_nicu })}
+                                            className={`flex items-center justify-between px-3 py-2.5 rounded-lg border text-left transition-all ${
+                                                patientForm.requires_nicu
+                                                    ? 'bg-sky-50 border-sky-500 text-sky-900 ring-1 ring-sky-500'
+                                                    : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'
+                                            }`}
+                                        >
+                                            <div>
+                                                <div className="text-xs font-extrabold uppercase">Baby · NICU Clearance</div>
+                                                <div className="text-[11px] text-slate-500">Requires NICU clearance</div>
+                                            </div>
+                                            <span className={`text-[11px] font-black px-2 py-0.5 rounded ${patientForm.requires_nicu ? 'bg-sky-600 text-white' : 'bg-slate-200 text-slate-600'}`}>
+                                                {patientForm.requires_nicu ? 'ON' : 'OFF'}
+                                            </span>
+                                        </button>
+                                    </div>
+                                </div>
+                                )}
                             </div>
 
                             {/* Modal Footer */}
