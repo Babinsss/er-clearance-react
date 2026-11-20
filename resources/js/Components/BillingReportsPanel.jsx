@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import axios from 'axios';
 
 const PAGE_SIZE = 100;
@@ -46,7 +46,7 @@ function formatLocalDate(date) {
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
-export default function BillingReportsPanel() {
+export default function BillingReportsPanel({ liveSyncTick = 0 }) {
     const [filters, setFilters] = useState({
         date_from: '',
         date_to: '',
@@ -73,6 +73,12 @@ export default function BillingReportsPanel() {
     const [printSeq, setPrintSeq] = useState(0);
     const [isPreparingPrint, setIsPreparingPrint] = useState(false);
 
+    const latestFiltersRef = useRef(filters);
+    latestFiltersRef.current = filters;
+    const fetchSeqRef = useRef(0);
+    const isInteractiveLoadingRef = useRef(false);
+    const isSilentPollingRef = useRef(false);
+
     const buildQueryString = useCallback((f) => {
         const params = new URLSearchParams();
         if (f.date_from) params.set('date_from', f.date_from);
@@ -87,12 +93,26 @@ export default function BillingReportsPanel() {
         return params.toString();
     }, []);
 
-    const fetchReports = useCallback(async (activeFilters) => {
-        setLoading(true);
-        setError('');
+    const fetchReports = useCallback(async (activeFilters, { silent = false } = {}) => {
+        if (silent && (isInteractiveLoadingRef.current || isSilentPollingRef.current)) {
+            return;
+        }
+
+        const seq = ++fetchSeqRef.current;
+
+        if (silent) {
+            isSilentPollingRef.current = true;
+        } else {
+            isInteractiveLoadingRef.current = true;
+            setLoading(true);
+            setError('');
+        }
+
         try {
             const qs = buildQueryString(activeFilters);
             const res = await axios.get(`/billing/reports?${qs}`);
+            if (seq !== fetchSeqRef.current) return;
+
             setReportData({
                 records: res.data.records || [],
                 total: res.data.total || 0,
@@ -100,22 +120,51 @@ export default function BillingReportsPanel() {
                 availableDispositions: res.data.availableDispositions || [],
                 availableWards: res.data.availableWards || [],
             });
-            setCurrentPage(1);
+
+            if (!silent) {
+                setCurrentPage(1);
+            }
         } catch (err) {
+            if (seq !== fetchSeqRef.current) return;
             console.error('Failed to load routed reports:', err);
-            const msg = err.response?.data?.message || 'Unable to load routed patient reports. Please try again.';
-            setError(msg);
+            if (!silent) {
+                const msg = err.response?.data?.message || 'Unable to load routed patient reports. Please try again.';
+                setError(msg);
+            }
         } finally {
-            setLoading(false);
+            if (silent) {
+                isSilentPollingRef.current = false;
+            } else if (seq === fetchSeqRef.current) {
+                isInteractiveLoadingRef.current = false;
+                setLoading(false);
+            }
         }
     }, [buildQueryString]);
 
     useEffect(() => {
         const timer = setTimeout(() => {
-            fetchReports(filters);
+            fetchReports(filters, { silent: false });
         }, filters.search ? 250 : 0);
         return () => clearTimeout(timer);
     }, [filters, fetchReports]);
+
+    // Real-time background refresh every 5s (and on parent Echo tick) without disrupting active page or showing skeleton
+    useEffect(() => {
+        const pollInterval = setInterval(() => {
+            fetchReports(latestFiltersRef.current, { silent: true });
+        }, 5000);
+
+        return () => clearInterval(pollInterval);
+    }, [fetchReports]);
+
+    const isFirstSyncTick = useRef(true);
+    useEffect(() => {
+        if (isFirstSyncTick.current) {
+            isFirstSyncTick.current = false;
+            return;
+        }
+        fetchReports(latestFiltersRef.current, { silent: true });
+    }, [liveSyncTick, fetchReports]);
 
     const activeDatePreset = useMemo(() => {
         const today = new Date();
@@ -205,6 +254,10 @@ export default function BillingReportsPanel() {
     }, [reportData.dispositionSummary]);
 
     const totalPages = Math.max(1, Math.ceil(reportData.records.length / PAGE_SIZE));
+
+    useEffect(() => {
+        setCurrentPage((p) => (p > totalPages ? totalPages : p));
+    }, [totalPages]);
     const pagedRecords = useMemo(() => {
         const start = (currentPage - 1) * PAGE_SIZE;
         return reportData.records.slice(start, start + PAGE_SIZE);
@@ -292,13 +345,16 @@ export default function BillingReportsPanel() {
         <div className="flex-1 flex flex-col overflow-hidden">
             {/* Report Header & Primary Actions */}
             <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 shrink-0">
-                <div>
-                    <h3 className="text-lg font-extrabold text-slate-900 tracking-tight">
-                        Routed Patients Masterlist &amp; Disposition Reports
-                    </h3>
-                    <p className="text-xs text-slate-600 font-medium mt-0.5">
-                        Alphabetical and disposition-grouped masterlist across all routed clearances.
-                    </p>
+                <div className="flex items-center gap-2.5">
+                    <div>
+                        <h3 className="text-lg font-extrabold text-slate-900 tracking-tight">
+                            Routed Patients Masterlist &amp; Disposition Reports
+                        </h3>
+                        <p className="text-xs text-slate-600 font-medium mt-0.5">
+                            Alphabetical and disposition-grouped masterlist across all routed clearances.
+                        </p>
+                    </div>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-teal-500 -mt-3 shrink-0" title="Live Sync Active"></span>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">

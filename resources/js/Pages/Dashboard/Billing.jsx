@@ -111,34 +111,51 @@ export default function Billing({
         return true;
     });
 
-    // 1. OPTIMIZED BACKGROUND POLLING:
-    // Polls every 5s depending on current active tab.
-    // Never disturbs archives pagination or search.
-    useEffect(() => {
-        const pollInterval = setInterval(() => {
-            if (activeTab === 'routing') {
-                router.reload({ 
-                    only: ['routedPatients', 'costCenterStats', 'hospitalStats', 'clearedPatients'], 
-                    preserveScroll: true, 
-                    preserveState: true 
-                });
-            } else if (activeTab === 'ready') {
-                router.reload({ 
-                    only: ['clearedPatients', 'routedPatients'], 
-                    preserveScroll: true, 
-                    preserveState: true 
-                });
-            }
-        }, 5000); 
+    const isPollingRef = useRef(false);
+    const [liveSyncTick, setLiveSyncTick] = useState(0);
 
+    // 1. REAL-TIME BACKGROUND SYNC:
+    // Polls live queues every 5s across ALL tabs (including Head of Billing's default Reports tab)
+    // so new routed patients and ready-to-print clearances update immediately without disturbing archives pagination/search.
+    useEffect(() => {
+        const reloadLiveQueues = () => {
+            if (isPollingRef.current) return;
+            isPollingRef.current = true;
+            router.reload({
+                only: ['routedPatients', 'costCenterStats', 'hospitalStats', 'clearedPatients', 'totalArchivedCount'],
+                preserveScroll: true,
+                preserveState: true,
+                onFinish: () => {
+                    isPollingRef.current = false;
+                },
+            });
+        };
+
+        const handleEchoUpdate = () => {
+            reloadLiveQueues();
+            setLiveSyncTick((t) => t + 1);
+        };
+
+        if (window.Echo) {
+            window.Echo.channel('clearance-updates')
+                .listen('PatientRouted', handleEchoUpdate);
+        }
+
+        const pollInterval = setInterval(reloadLiveQueues, 5000);
+
+        return () => {
+            clearInterval(pollInterval);
+            if (window.Echo) window.Echo.leaveChannel('clearance-updates');
+        };
+    }, []);
+
+    // Audio alert whenever a newly cleared patient becomes ready for F07 printing
+    useEffect(() => {
         if (clearedPatients.length > previousClearedCount.current && soundEnabled) {
             new Audio('/sounds/notif.wav').play().catch(() => {});
         }
-        
         previousClearedCount.current = clearedPatients.length;
-
-        return () => clearInterval(pollInterval);
-    }, [clearedPatients, soundEnabled, activeTab]);
+    }, [clearedPatients.length, soundEnabled]);
 
     // 2. SERVER-SIDE SEARCH FOR ARCHIVES:
     useEffect(() => {
@@ -1312,7 +1329,7 @@ export default function Billing({
                     {/* TAB 4: ROUTED PATIENTS MASTERLIST & DISPOSITION REPORTS                   */}
                     {/* ========================================================================= */}
                     {activeTab === 'reports' && canGenerateReports && (
-                        <BillingReportsPanel />
+                        <BillingReportsPanel liveSyncTick={liveSyncTick} />
                     )}
 
                 </div>
