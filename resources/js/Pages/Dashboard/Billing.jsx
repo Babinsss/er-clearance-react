@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Head, router } from '@inertiajs/react';
 import PortalLayout from '@/Layouts/PortalLayout';
 import Modal from '@/Components/Modal';
@@ -25,6 +25,7 @@ export default function Billing({
 
     // Search & Filter State
     const [searchTerm, setSearchTerm] = useState(archiveSearch || '');
+    const [readyWardFilter, setReadyWardFilter] = useState('all');
     const [routingSearch, setRoutingSearch] = useState('');
     const [selectedWard, setSelectedWard] = useState('all');
     const [selectedCostCenter, setSelectedCostCenter] = useState('all');
@@ -66,9 +67,58 @@ export default function Billing({
         return (
             (patient.patient_name || '').toLowerCase().includes(term) || 
             (patient.hospital_number || '').includes(term) ||
-            (patient.enccode || '').toLowerCase().includes(term)
+            (patient.enccode || '').toLowerCase().includes(term) ||
+            (patient.room_ward || '').toLowerCase().includes(term)
         );
     });
+
+    const normalizeWardName = (ward) => (ward && ward.trim() ? ward.trim() : 'Unspecified Ward');
+
+    const compareWardNames = (a, b) => {
+        if (a === 'Unspecified Ward') return 1;
+        if (b === 'Unspecified Ward') return -1;
+        return a.localeCompare(b);
+    };
+
+    // Ward counts & grouping for Ready for Print tab
+    const readyWardOptions = useMemo(() => {
+        const counts = new Map();
+        clearedPatients.forEach((patient) => {
+            const ward = normalizeWardName(patient.room_ward);
+            counts.set(ward, (counts.get(ward) || 0) + 1);
+        });
+        return Array.from(counts.entries())
+            .sort(([wardA], [wardB]) => compareWardNames(wardA, wardB))
+            .map(([ward, count]) => ({ ward, count }));
+    }, [clearedPatients]);
+
+    const activeReadyWard =
+        readyWardFilter === 'all' || readyWardOptions.some((opt) => opt.ward === readyWardFilter)
+            ? readyWardFilter
+            : 'all';
+
+    const readyPatientsInWard = useMemo(() => {
+        if (activeTab !== 'ready') return [];
+        if (activeReadyWard === 'all') return filteredPatients;
+        return filteredPatients.filter(
+            (patient) => normalizeWardName(patient.room_ward) === activeReadyWard
+        );
+    }, [activeTab, activeReadyWard, filteredPatients]);
+
+    const groupedReadyWards = useMemo(() => {
+        if (activeTab !== 'ready') return [];
+        const groups = new Map();
+        readyPatientsInWard.forEach((patient) => {
+            const ward = normalizeWardName(patient.room_ward);
+            if (!groups.has(ward)) {
+                groups.set(ward, []);
+            }
+            groups.get(ward).push(patient);
+        });
+        return Array.from(groups.entries())
+            .sort(([wardA], [wardB]) => compareWardNames(wardA, wardB))
+            .map(([ward, patients]) => ({ ward, patients }));
+    }, [activeTab, readyPatientsInWard]);
 
     // Client-side filtering for Routed Patients
     const filteredRoutedPatients = routedPatients.filter(patient => {
@@ -274,6 +324,107 @@ export default function Billing({
         if (last > 1) pages.push(last);
         return pages;
     };
+
+    const renderQueueRow = (patient, index) => (
+        <div key={patient.id || patient.enccode || index} className="grid grid-cols-12 gap-4 px-6 py-4 items-center bg-white hover:bg-slate-50 transition-colors">
+            <div className="col-span-4 pl-2">
+                <div className="font-bold text-base text-slate-800">{patient.patient_name}</div>
+                <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                    <span className="text-xs text-slate-600 font-bold tabular-nums bg-slate-100 px-2 py-0.5 rounded border border-slate-200 inline-block">
+                        {patient.hospital_number}
+                    </span>
+                    <span className="text-[11px] text-teal-800 font-bold bg-teal-50 px-2 py-0.5 rounded border border-teal-200 inline-block">
+                        {normalizeWardName(patient.room_ward)}
+                    </span>
+                </div>
+            </div>
+
+            <div className="col-span-3 pr-4">
+                <div className="text-[11px] font-mono break-all px-2 py-1 rounded-md border bg-slate-50 text-slate-700 border-slate-200 uppercase">
+                    {patient.enccode}
+                </div>
+                <div className="text-[11px] text-slate-500 font-bold uppercase tracking-wider mt-1.5 tabular-nums">
+                    Routed: {new Date(patient.created_at).toLocaleDateString('en-US', { timeZone: 'Asia/Manila' })}
+                </div>
+            </div>
+
+            <div className="col-span-2 flex justify-center">
+                {activeTab === 'ready' ? (
+                    <span className="bg-emerald-50 text-emerald-800 text-[11px] font-bold px-3 py-1.5 rounded-md border border-emerald-200 uppercase tracking-wide inline-flex items-center shadow-sm">
+                        <svg className="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
+                        Cleared
+                    </span>
+                ) : (
+                    <span className="bg-slate-100 text-slate-700 text-[11px] font-bold px-3 py-1.5 rounded-md border border-slate-200 uppercase tracking-wide inline-flex items-center shadow-sm">
+                        <svg className="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path></svg>
+                        Archived
+                    </span>
+                )}
+            </div>
+
+            <div className="col-span-3 flex flex-wrap justify-end gap-2 pr-2">
+                {activeTab === 'ready' ? (
+                    awaitingArchiveConfirm === patient.enccode ? (
+                        <>
+                            <button
+                                type="button"
+                                onClick={() => handleConfirmArchive(patient.enccode)}
+                                disabled={archivingEncounter === patient.enccode}
+                                className="inline-flex justify-center items-center px-3.5 py-2 rounded-lg text-xs font-bold transition-all shadow-sm bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-1"
+                            >
+                                {archivingEncounter === patient.enccode ? (
+                                    <>
+                                        <svg className="w-3.5 h-3.5 mr-1.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                        <span>Archiving...</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <svg className="w-3.5 h-3.5 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7"></path></svg>
+                                        <span>Confirm Printed &amp; Archive</span>
+                                    </>
+                                )}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => handleOpenPrint(patient.enccode)}
+                                disabled={archivingEncounter === patient.enccode}
+                                className="inline-flex justify-center items-center px-3 py-2 rounded-lg text-xs font-bold transition-all border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 focus-visible:ring-offset-1"
+                            >
+                                Print Again
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleCancelPrintArchive}
+                                disabled={archivingEncounter === patient.enccode}
+                                className="inline-flex justify-center items-center px-2.5 py-2 rounded-lg text-xs font-bold text-slate-600 hover:text-slate-800 hover:bg-slate-100 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-1"
+                            >
+                                Cancel
+                            </button>
+                        </>
+                    ) : (
+                        <button
+                            type="button"
+                            onClick={() => handleOpenPrint(patient.enccode)}
+                            disabled={archivingEncounter === patient.enccode}
+                            className="inline-flex justify-center items-center px-4 py-2.5 rounded-lg text-sm font-bold transition-all shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 focus-visible:ring-offset-1 w-full xl:w-auto bg-teal-600 text-white hover:bg-teal-700 hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+                            <span>Print F07</span>
+                        </button>
+                    )
+                ) : (
+                    <button
+                        type="button"
+                        onClick={() => handleOpenPrint(patient.enccode)}
+                        className="inline-flex justify-center items-center px-4 py-2.5 rounded-lg text-sm font-bold transition-all shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-600 focus-visible:ring-offset-1 w-full xl:w-auto bg-slate-700 text-white hover:bg-slate-800 hover:shadow-md"
+                    >
+                        <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                        <span>Reprint</span>
+                    </button>
+                )}
+            </div>
+        </div>
+    );
 
     // Cost Center entries sorted by average turnaround time
     const costCenterEntries = Object.values(costCenterStats || {});
@@ -1090,6 +1241,59 @@ export default function Billing({
                                 </div>
                             )}
 
+                            {/* WARD FILTER STRIP (READY FOR PRINT TAB) */}
+                            {activeTab === 'ready' && clearedPatients.length > 0 && (
+                                <div className="px-6 py-3 bg-white border-b border-slate-200 flex flex-wrap items-center justify-between gap-2.5 shrink-0">
+                                    <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter ready clearances by originating ward">
+                                        <button
+                                            type="button"
+                                            onClick={() => setReadyWardFilter('all')}
+                                            aria-pressed={activeReadyWard === 'all'}
+                                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 focus-visible:ring-offset-1 ${
+                                                activeReadyWard === 'all'
+                                                    ? 'bg-teal-700 text-white border-teal-700 shadow-sm'
+                                                    : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100 hover:border-slate-300'
+                                            }`}
+                                        >
+                                            <span>All Wards</span>
+                                            <span className={`px-1.5 py-0.5 rounded-full text-[11px] font-mono tabular-nums leading-none ${
+                                                activeReadyWard === 'all' ? 'bg-teal-800 text-teal-50' : 'bg-slate-200 text-slate-700'
+                                            }`}>
+                                                {clearedPatients.length}
+                                            </span>
+                                        </button>
+
+                                        {readyWardOptions.map((option) => {
+                                            const isSelected = activeReadyWard === option.ward;
+                                            return (
+                                                <button
+                                                    key={option.ward}
+                                                    type="button"
+                                                    onClick={() => setReadyWardFilter(isSelected ? 'all' : option.ward)}
+                                                    aria-pressed={isSelected}
+                                                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 focus-visible:ring-offset-1 ${
+                                                        isSelected
+                                                            ? 'bg-teal-700 text-white border-teal-700 shadow-sm'
+                                                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50 hover:border-slate-300'
+                                                    }`}
+                                                >
+                                                    <span>{option.ward}</span>
+                                                    <span className={`px-1.5 py-0.5 rounded-full text-[11px] font-mono tabular-nums leading-none ${
+                                                        isSelected ? 'bg-teal-800 text-teal-50' : 'bg-teal-50 text-teal-800 border border-teal-200'
+                                                    }`}>
+                                                        {option.count}
+                                                    </span>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+
+                                    <span className="text-xs font-medium text-slate-600 tabular-nums shrink-0">
+                                        {readyPatientsInWard.length} ready across {groupedReadyWards.length} {groupedReadyWards.length === 1 ? 'ward' : 'wards'}
+                                    </span>
+                                </div>
+                            )}
+
                             {/* TABLE HEADERS */}
                             <div className="grid grid-cols-12 gap-4 px-6 py-3 bg-white border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider sticky top-0 z-10 shadow-sm">
                                 <div className="col-span-4 pl-2">Patient Details</div>
@@ -1099,116 +1303,63 @@ export default function Billing({
                             </div>
 
                             <div className="overflow-y-auto flex-1 bg-slate-50/30">
-                                {filteredPatients.length === 0 ? (
-                                    <div className="flex flex-col items-center justify-center p-24 text-slate-400">
-                                        <div className="bg-white p-4 rounded-full shadow-sm border border-slate-100 mb-4">
-                                            <svg className="w-10 h-10 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                {activeTab === 'ready' ? (
+                                    groupedReadyWards.length === 0 ? (
+                                        <div className="flex flex-col items-center justify-center p-24 text-slate-500">
+                                            <div className="bg-white p-4 rounded-full shadow-sm border border-slate-100 mb-4">
+                                                <svg className="w-10 h-10 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                            </div>
+                                            <span className="font-bold text-slate-600">
+                                                {clearedPatients.length === 0
+                                                    ? 'No cleared patients ready for printing.'
+                                                    : `No cleared patients matching "${searchTerm}".`}
+                                            </span>
+                                            {searchTerm && clearedPatients.length > 0 && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setSearchTerm('')}
+                                                    className="mt-3 px-3.5 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-xs font-bold text-slate-700"
+                                                >
+                                                    Clear Search
+                                                </button>
+                                            )}
                                         </div>
-                                        <span className="font-bold text-slate-500">
-                                            {activeTab === 'ready' 
-                                                ? 'No cleared patients ready for printing.' 
-                                                : (searchTerm ? `No archived patients matching "${searchTerm}".` : 'No printed patients found.')}
+                                    ) : (
+                                        <div className="divide-y divide-slate-200">
+                                            {groupedReadyWards.map((group) => (
+                                                <section key={group.ward} aria-label={`${group.ward} ready for print`}>
+                                                    <div className="sticky top-0 z-10 px-6 py-2.5 bg-slate-100/95 backdrop-blur-sm border-b border-slate-200 flex items-center justify-between gap-3">
+                                                        <div className="flex items-center gap-2 min-w-0">
+                                                            <svg className="w-4 h-4 text-teal-700 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                                                            </svg>
+                                                            <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-800 truncate">
+                                                                {group.ward}
+                                                            </h4>
+                                                        </div>
+                                                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold tabular-nums bg-teal-50 text-teal-800 border border-teal-200 shrink-0">
+                                                            {group.patients.length} {group.patients.length === 1 ? 'patient' : 'patients'} ready
+                                                        </span>
+                                                    </div>
+                                                    <div className="divide-y divide-slate-100">
+                                                        {group.patients.map((patient, index) => renderQueueRow(patient, index))}
+                                                    </div>
+                                                </section>
+                                            ))}
+                                        </div>
+                                    )
+                                ) : filteredPatients.length === 0 ? (
+                                    <div className="flex flex-col items-center justify-center p-24 text-slate-500">
+                                        <div className="bg-white p-4 rounded-full shadow-sm border border-slate-100 mb-4">
+                                            <svg className="w-10 h-10 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                        </div>
+                                        <span className="font-bold text-slate-600">
+                                            {searchTerm ? `No archived patients matching "${searchTerm}".` : 'No printed patients found.'}
                                         </span>
                                     </div>
                                 ) : (
                                     <div className="divide-y divide-slate-100">
-                                        {filteredPatients.map((patient, index) => (
-                                            <div key={patient.id || index} className="grid grid-cols-12 gap-4 px-6 py-4 items-center bg-white hover:bg-slate-50 transition-colors">
-                                                
-                                                <div className={`col-span-4 pl-2 border-l-4 ${activeTab === 'ready' ? 'border-emerald-400' : 'border-slate-400'}`}>
-                                                    <div className="font-bold text-base text-slate-800">{patient.patient_name}</div>
-                                                    <div className="text-xs text-slate-500 font-bold bg-slate-100 px-2 py-0.5 rounded border border-slate-200 inline-block mt-1">
-                                                        {patient.hospital_number}
-                                                    </div>
-                                                </div>
-                                                
-                                                <div className="col-span-3 pr-4">
-                                                    <div className="text-[11px] font-mono break-all px-2 py-1 rounded-md border bg-slate-50 text-slate-600 border-slate-200 uppercase">
-                                                        {patient.enccode}
-                                                    </div>
-                                                    <div className="text-[11px] text-slate-400 font-bold uppercase tracking-wider mt-1.5">
-                                                        Routed: {new Date(patient.created_at).toLocaleDateString('en-US', { timeZone: 'Asia/Manila' })}
-                                                    </div>
-                                                </div>
-                                                
-                                                <div className="col-span-2 flex justify-center">
-                                                    {activeTab === 'ready' ? (
-                                                        <span className="bg-emerald-50 text-emerald-700 text-[11px] font-bold px-3 py-1.5 rounded-md border border-emerald-200 uppercase tracking-wide inline-flex items-center shadow-sm">
-                                                            <svg className="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
-                                                            Cleared
-                                                        </span>
-                                                    ) : (
-                                                        <span className="bg-slate-100 text-slate-600 text-[11px] font-bold px-3 py-1.5 rounded-md border border-slate-200 uppercase tracking-wide inline-flex items-center shadow-sm">
-                                                            <svg className="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path></svg>
-                                                            Archived
-                                                        </span>
-                                                    )}
-                                                </div>
-                                                
-                                                <div className="col-span-3 flex flex-wrap justify-end gap-2 pr-2">
-                                                    {activeTab === 'ready' ? (
-                                                        awaitingArchiveConfirm === patient.enccode ? (
-                                                            <>
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => handleConfirmArchive(patient.enccode)}
-                                                                    disabled={archivingEncounter === patient.enccode}
-                                                                    className="inline-flex justify-center items-center px-3.5 py-2 rounded-lg text-xs font-bold transition-all shadow-sm bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                                                                >
-                                                                    {archivingEncounter === patient.enccode ? (
-                                                                        <>
-                                                                            <svg className="w-3.5 h-3.5 mr-1.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                                                                            <span>Archiving...</span>
-                                                                        </>
-                                                                    ) : (
-                                                                        <>
-                                                                            <svg className="w-3.5 h-3.5 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7"></path></svg>
-                                                                            <span>Confirm Printed & Archive</span>
-                                                                        </>
-                                                                    )}
-                                                                </button>
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => handleOpenPrint(patient.enccode)}
-                                                                    disabled={archivingEncounter === patient.enccode}
-                                                                    className="inline-flex justify-center items-center px-3 py-2 rounded-lg text-xs font-bold transition-all border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-50"
-                                                                >
-                                                                    Print Again
-                                                                </button>
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={handleCancelPrintArchive}
-                                                                    disabled={archivingEncounter === patient.enccode}
-                                                                    className="inline-flex justify-center items-center px-2.5 py-2 rounded-lg text-xs font-bold text-slate-500 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-50"
-                                                                >
-                                                                    Cancel
-                                                                </button>
-                                                            </>
-                                                        ) : (
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => handleOpenPrint(patient.enccode)}
-                                                                disabled={archivingEncounter === patient.enccode}
-                                                                className="inline-flex justify-center items-center px-4 py-2.5 rounded-lg text-sm font-bold transition-all shadow-sm focus:outline-none w-full xl:w-auto bg-teal-600 text-white hover:bg-teal-700 hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
-                                                            >
-                                                                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
-                                                                <span>Print F07</span>
-                                                            </button>
-                                                        )
-                                                    ) : (
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => handleOpenPrint(patient.enccode)}
-                                                            className="inline-flex justify-center items-center px-4 py-2.5 rounded-lg text-sm font-bold transition-all shadow-sm focus:outline-none w-full xl:w-auto bg-slate-700 text-white hover:bg-slate-800 hover:shadow-md"
-                                                        >
-                                                            <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
-                                                            <span>Reprint</span>
-                                                        </button>
-                                                    )}
-                                                </div>
-
-                                            </div>
-                                        ))}
+                                        {filteredPatients.map((patient, index) => renderQueueRow(patient, index))}
                                     </div>
                                 )}
                                 
