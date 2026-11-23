@@ -58,6 +58,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         if (($deptRecord && $deptRecord->category === 'Cost Center') || in_array($user->department, $costCenters)) {
             
             $myClearedLogs = \App\Models\ClearanceLog::where('department', $user->department)
+                ->with('user:id,name')
                 ->orderBy('created_at', 'desc')
                 ->get()
                 ->keyBy('enccode');
@@ -132,14 +133,40 @@ Route::middleware(['auth', 'verified'])->group(function () {
             }
 
             $activeTransactions = $activeQuery->orderBy('created_at', 'desc')->get();
-            
-            $pendingPatients = $activeTransactions->map(function($txn) {
+            $activeEnccodes = $activeTransactions->pluck('enccode')->toArray();
+            $pendingRemarksByEnccode = \App\Models\ClearancePendingRemark::whereIn('enccode', $activeEnccodes)
+                ->with('user:id,name')
+                ->get()
+                ->groupBy('enccode');
+            $canonicalUserDept = BillingController::resolveCanonicalCostCenter($user->department) ?? $user->department;
+            $operatingHours = new \App\Services\DepartmentOperatingHours();
+            $now = now();
+            $departmentSchedule = $operatingHours->getStatusAt($canonicalUserDept, $now);
+
+            $pendingPatients = $activeTransactions->map(function($txn) use ($pendingRemarksByEnccode, $canonicalUserDept, $operatingHours, $now) {
+                $matchedRemark = BillingController::matchDepartmentRemark(
+                    $canonicalUserDept,
+                    $pendingRemarksByEnccode->get($txn->enccode, collect())
+                );
+                $effectiveWaitingSec = $operatingHours->calculateEffectiveSeconds($canonicalUserDept, $txn->created_at, $now);
                 return [
                     'enccode' => $txn->enccode,
+                    'hospital_number' => $txn->hospital_number,
                     'name' => $txn->patient_name,
                     'ward' => $txn->room_ward,
+                    'diagnosis' => $txn->diagnosis,
                     'status' => $txn->overall_status,
-                    'date' => $txn->created_at->toIso8601String() 
+                    'reroute_count' => (int) ($txn->reroute_count ?? 0),
+                    'reroute_reason' => $txn->reroute_reason,
+                    'rerouted_by' => $txn->rerouted_by,
+                    'date' => $txn->created_at->toIso8601String(),
+                    'effective_waiting_seconds' => $effectiveWaitingSec,
+                    'effective_waiting_minutes' => (int) floor($effectiveWaitingSec / 60),
+                    'pending_remark' => $matchedRemark ? [
+                        'remarks' => $matchedRemark->remarks,
+                        'updated_by' => $matchedRemark->user->name ?? 'Staff',
+                        'updated_at' => $matchedRemark->updated_at?->toIso8601String(),
+                    ] : null,
                 ];
             });
 
@@ -148,17 +175,24 @@ Route::middleware(['auth', 'verified'])->group(function () {
                 ->get();
 
             $historyPatients = $completedTransactions->map(function($txn) use ($myClearedLogs) {
+                $log = $myClearedLogs[$txn->enccode];
                 return [
                     'enccode' => $txn->enccode,
+                    'hospital_number' => $txn->hospital_number,
                     'name' => $txn->patient_name,
                     'ward' => $txn->room_ward,
+                    'diagnosis' => $txn->diagnosis,
                     'overall_status' => $txn->overall_status,
-                    'cleared_date' => $myClearedLogs[$txn->enccode]->created_at->toIso8601String()
+                    'cleared_by' => $log->user->name ?? 'Staff',
+                    'cleared_day' => $log->created_at->timezone('Asia/Manila')->toDateString(),
+                    'cleared_date' => $log->created_at->toIso8601String(),
                 ];
             });
 
             return Inertia::render('Dashboard/CostCenter', [
                 'department' => $user->department,
+                'departmentSchedule' => $departmentSchedule,
+                'todayDate' => now('Asia/Manila')->toDateString(),
                 'pendingPatients' => $pendingPatients,
                 'historyPatients' => $historyPatients 
             ]);
@@ -183,10 +217,23 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
         $enccodes = $wardTransactions->pluck('enccode')->toArray();
         $allLogs = \App\Models\ClearanceLog::whereIn('enccode', $enccodes)->get()->groupBy('enccode');
+        $allPendingRemarks = \App\Models\ClearancePendingRemark::whereIn('enccode', $enccodes)
+            ->with('user:id,name')
+            ->orderBy('updated_at', 'desc')
+            ->get()
+            ->groupBy('enccode');
 
-        $wardTransactions->transform(function($tx) use ($allLogs) {
+        $wardTransactions->transform(function($tx) use ($allLogs, $allPendingRemarks) {
             $tx->cleared_departments = isset($allLogs[$tx->enccode]) 
                 ? $allLogs[$tx->enccode]->pluck('department')->toArray() 
+                : [];
+            $tx->pending_remarks = isset($allPendingRemarks[$tx->enccode])
+                ? $allPendingRemarks[$tx->enccode]->map(fn($r) => [
+                    'department' => $r->department,
+                    'remarks' => $r->remarks,
+                    'updated_by' => $r->user->name ?? 'Staff',
+                    'updated_at' => $r->updated_at?->toIso8601String(),
+                ])->values()->toArray()
                 : [];
             return $tx;
         });
@@ -205,21 +252,40 @@ Route::middleware(['auth', 'verified'])->group(function () {
                 ->keyBy('enccode');
             $nicuClearedEnccodes = $nicuClearedLogs->keys()->toArray();
 
-            $incomingNicuPending = \App\Models\ClearanceTransaction::where('requires_nicu', true)
+            $nicuPendingTxns = \App\Models\ClearanceTransaction::where('requires_nicu', true)
                 ->where('room_ward', '!=', $user->department)
                 ->whereNotIn('overall_status', ['Cleared', 'Cancelled', 'Archived'])
                 ->whereNotIn('enccode', $nicuClearedEnccodes)
                 ->orderBy('created_at', 'desc')
+                ->get();
+
+            $nicuRemarksByEnccode = \App\Models\ClearancePendingRemark::whereIn('enccode', $nicuPendingTxns->pluck('enccode'))
+                ->with('user:id,name')
                 ->get()
-                ->map(fn($txn) => [
-                    'enccode' => $txn->enccode,
-                    'hospital_number' => $txn->hospital_number,
-                    'name' => $txn->patient_name,
-                    'ward' => $txn->room_ward,
-                    'disposition' => $txn->disposition,
-                    'status' => $txn->overall_status,
-                    'date' => $txn->created_at->toIso8601String(),
-                ])
+                ->groupBy('enccode');
+
+            $incomingNicuPending = $nicuPendingTxns
+                ->map(function ($txn) use ($nicuRemarksByEnccode) {
+                    $matchedRemark = BillingController::matchDepartmentRemark(
+                        'NICU',
+                        $nicuRemarksByEnccode->get($txn->enccode, collect())
+                    );
+                    return [
+                        'enccode' => $txn->enccode,
+                        'hospital_number' => $txn->hospital_number,
+                        'name' => $txn->patient_name,
+                        'ward' => $txn->room_ward,
+                        'disposition' => $txn->disposition,
+                        'diagnosis' => $txn->diagnosis,
+                        'status' => $txn->overall_status,
+                        'date' => $txn->created_at->toIso8601String(),
+                        'pending_remark' => $matchedRemark ? [
+                            'remarks' => $matchedRemark->remarks,
+                            'updated_by' => $matchedRemark->user->name ?? 'Staff',
+                            'updated_at' => $matchedRemark->updated_at?->toIso8601String(),
+                        ] : null,
+                    ];
+                })
                 ->values();
 
             $incomingNicuHistory = \App\Models\ClearanceTransaction::where('requires_nicu', true)
@@ -261,10 +327,22 @@ Route::middleware(['auth', 'verified'])->group(function () {
                     'hpercode' => $encounter->hpercode,
                     'name' => $encounter->full_name,
                     'is_routed' => ($transaction && $transaction->overall_status !== 'Cancelled') ? true : false,
+                    'overall_status' => $transaction ? $transaction->overall_status : null,
+                    'can_reroute' => (bool) (
+                        $transaction
+                        && in_array($transaction->overall_status, ['Cleared', 'Archived'], true)
+                        && strcasecmp(trim((string) $transaction->room_ward), trim((string) $user->department)) === 0
+                    ),
+                    'reroute_count' => (int) ($transaction->reroute_count ?? 0),
+                    'reroute_reason' => $transaction ? $transaction->reroute_reason : null,
+                    'is_oecb' => $transaction ? (bool) $transaction->is_oecb : null,
+                    'is_for_procedure' => $transaction ? (bool) $transaction->is_for_procedure : false,
+                    'procedure_type' => $transaction ? ($transaction->procedure_type ?? '') : '',
                     'arrival_datetime' => $transaction && $transaction->arrival_datetime 
                         ? date('Y-m-d\TH:i', strtotime($transaction->arrival_datetime)) 
                         : '',
                     'disposition' => $transaction ? $transaction->disposition : '',
+                    'diagnosis' => $transaction ? ($transaction->diagnosis ?? '') : '',
                     'requires_or' => (bool) ($transaction->requires_or ?? false),
                     'requires_nicu' => (bool) ($transaction->requires_nicu ?? false),
                 ];
@@ -320,6 +398,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
     // --- CLEARANCE ROUTES ---
     Route::post('/transactions', [ClearanceController::class, 'storeTransaction'])->name('transactions.store');
     Route::post('/clearance', [ClearanceController::class, 'store'])->name('clearance.store');
+    Route::post('/clearance/pending-remarks', [ClearanceController::class, 'storePendingRemark'])->name('clearance.pending-remarks.store');
+    Route::post('/clearance/reroute', [ClearanceController::class, 'rerouteTransaction'])->name('clearance.reroute');
+    Route::get('/cost-center/reports/print', [ClearanceController::class, 'printCostCenterDailyReport'])->name('cost-center.reports.print');
     Route::post('/clearance/archive', function (Request $request) {
         \App\Models\ClearanceTransaction::where('enccode', $request->enccode)->update(['overall_status' => 'Archived']);
         return back();

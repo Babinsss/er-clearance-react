@@ -9,5 +9,15 @@ class Department extends Model
 {
     use HasFactory;
 
-    protected $fillable = ['name', 'category'];
+    protected $fillable = [
+        'name',
+        'category',
+        'is_24_7',
+        'open_time',
+        'close_time',
+    ];
+
+    protected $casts = [
+        'is_24_7' => 'boolean',
+    ];
 }

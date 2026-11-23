@@ -6,9 +6,20 @@ import axios from 'axios';
 import PromissoryMasterlist from '@/Components/PromissoryMasterlist';
 import CreditReportsModule from '@/Components/CreditReportsModule';
 
-export default function CostCenter({ department, pendingPatients = [], historyPatients = [] }) {
+const QUICK_PENDING_REASONS = [
+    'Unserved items / pending result',
+    'Unreturned supplies or medication',
+    'Unsettled balance / promissory note needed',
+    'Missing or unposted charge slip',
+    'For further verification',
+];
+
+export default function CostCenter({ department, departmentSchedule = null, todayDate = '', pendingPatients = [], historyPatients = [] }) {
+    const fallbackToday = todayDate || new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
     const [searchTerm, setSearchTerm] = useState('');
     const [activeModule, setActiveModule] = useState('pending'); 
+    const [historyScope, setHistoryScope] = useState('today'); // 'today' | 'all'
+    const [selectedHistoryDate, setSelectedHistoryDate] = useState(fallbackToday);
     const [soundEnabled, setSoundEnabled] = useState(true);
     
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -22,15 +33,33 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
     const [isClearing, setIsClearing] = useState(false);
     const [patientCreditStatus, setPatientCreditStatus] = useState(null);
     const [isCheckingCredit, setIsCheckingCredit] = useState(false);
+
+    // Pending Remark state (inline in Inspect Modal & quick row modal)
+    const [remarkModalPatient, setRemarkModalPatient] = useState(null);
+    const [remarkText, setRemarkText] = useState('');
+    const [inlineRemarkText, setInlineRemarkText] = useState('');
+    const [isSavingRemark, setIsSavingRemark] = useState(false);
+
     const isCreditDept = (department || '').toLowerCase().includes('credit') || (department || '').toLowerCase().includes('collect');
+    // Hidden for CAC this year; set to true next year when Promissory & SAA modules go live.
+    const ENABLE_CREDIT_PROMISSORY_MODULE = false;
 
     const previousQueueCount = useRef(pendingPatients.length);
     const warnedPatients = useRef([]); 
 
-    const activeData = activeModule === 'pending' ? pendingPatients : historyPatients;
+    const todayCompletedCount = historyPatients.filter(
+        (p) => (p.cleared_day || '') === fallbackToday
+    ).length;
+
+    const scopedHistoryPatients = historyScope === 'today'
+        ? historyPatients.filter((p) => (p.cleared_day || '') === selectedHistoryDate)
+        : historyPatients;
+
+    const activeData = activeModule === 'pending' ? pendingPatients : scopedHistoryPatients;
     const filteredPatients = activeData.filter(patient => 
-        patient.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-        patient.enccode.includes(searchTerm)
+        (patient.name || '').toLowerCase().includes(searchTerm.toLowerCase()) || 
+        (patient.enccode || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (patient.hospital_number || '').toLowerCase().includes(searchTerm.toLowerCase())
     );
 
     const formatWaitTime = (minutes) => {
@@ -57,17 +86,22 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
 
         const pollInterval = setInterval(() => {
             router.reload({ 
-                only: ['pendingPatients', 'historyPatients'], 
+                only: ['pendingPatients', 'historyPatients', 'departmentSchedule'], 
                 preserveScroll: true, 
                 preserveState: true 
             });
 
+            if (departmentSchedule?.is_24_7 === false && departmentSchedule?.is_open_now === false) {
+                return;
+            }
+
             let triggeredWarning = false;
             pendingPatients.forEach(patient => {
-                const routedTime = new Date(patient.date).getTime();
-                const elapsedMinutes = (Date.now() - routedTime) / (1000 * 60);
+                const effectiveMinutes = typeof patient.effective_waiting_minutes === 'number'
+                    ? patient.effective_waiting_minutes
+                    : getWaitMinutes(patient.date);
 
-                if (elapsedMinutes >= 15 && !warnedPatients.current.includes(patient.enccode)) {
+                if (effectiveMinutes >= 15 && !warnedPatients.current.includes(patient.enccode)) {
                     triggeredWarning = true;
                     warnedPatients.current.push(patient.enccode); 
                 }
@@ -88,11 +122,13 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
             clearInterval(pollInterval);
             if (window.Echo) window.Echo.leaveChannel('clearance-updates');
         };
-    }, [pendingPatients, department, soundEnabled]);
+    }, [pendingPatients, department, departmentSchedule, soundEnabled]);
 
-    const getWaitMinutes = (dateString) => Math.floor((Date.now() - new Date(dateString).getTime()) / (1000 * 60));
+    const getWaitMinutes = (dateString) => Math.max(0, Math.floor((Date.now() - new Date(dateString).getTime()) / (1000 * 60)));
 
     const openInspectModal = async (enccode) => {
+        const matchedPending = pendingPatients.find((p) => p.enccode === enccode);
+        setInlineRemarkText(matchedPending?.pending_remark?.remarks || '');
         setIsModalOpen(true);
         setIsLoadingData(true);
         setActiveEnccode(enccode);
@@ -107,7 +143,7 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
             });
             setModalData(response.data);
             setPatientCreditStatus(null);
-            if (isCreditDept) {
+            if (ENABLE_CREDIT_PROMISSORY_MODULE && isCreditDept) {
                 const patName = response.data.transaction?.patient_name || response.data.patient_name || '';
                 if (patName) {
                     setIsCheckingCredit(true);
@@ -165,6 +201,33 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
         setIsConfirmOpen(true);
     };
 
+    const submitPendingRemark = (enccode, nextRemarks, { closeModal = false } = {}) => {
+        setIsSavingRemark(true);
+        router.post('/clearance/pending-remarks', {
+            enccode,
+            department,
+            remarks: nextRemarks,
+        }, {
+            preserveScroll: true,
+            onSuccess: () => {
+                setIsSavingRemark(false);
+                if (closeModal) {
+                    setRemarkModalPatient(null);
+                }
+                setToastIsError(false);
+                setToastMessage(nextRemarks.trim() ? 'Pending remark saved.' : 'Pending remark cleared.');
+                setTimeout(() => setToastMessage(null), 3000);
+            },
+            onError: (errors) => {
+                const serverMessage = Object.values(errors || {}).flat().find(Boolean);
+                setIsSavingRemark(false);
+                setToastIsError(true);
+                setToastMessage(serverMessage || 'Could not save pending remark. Please try again.');
+                setTimeout(() => setToastMessage(null), 4000);
+            },
+        });
+    };
+
     const executeClearDepartment = () => {
         setIsClearing(true);
         router.post('/clearance', {
@@ -208,6 +271,14 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                         <div>
                             <h2 className="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-1">Verification Portal</h2>
                             <div className="text-xl font-bold text-slate-800">{department}</div>
+                            {departmentSchedule && departmentSchedule.is_24_7 === false && (
+                                <div className="mt-1.5 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                                    <span>{departmentSchedule.hours_label}</span>
+                                    <span className={departmentSchedule.is_open_now ? 'text-emerald-700 font-bold' : 'text-slate-500'}>
+                                        • {departmentSchedule.is_open_now ? 'Open' : 'Closed'}
+                                    </span>
+                                </div>
+                            )}
                         </div>
                         
                         <button type="button" onClick={() => setSoundEnabled(!soundEnabled)} className="text-slate-400 hover:text-teal-500 transition-colors p-1 bg-slate-50 rounded-md border border-slate-200 shadow-sm" title={soundEnabled ? "Mute Alerts" : "Enable Alerts"} aria-label={soundEnabled ? "Mute alerts" : "Enable alerts"}>
@@ -219,23 +290,28 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                         </button>
                     </div>
 
-                    <nav className="flex-1 space-y-2">
-                        <button onClick={() => setActiveModule('pending')} className={`w-full flex items-center justify-between px-4 py-3 rounded-lg text-sm font-bold transition-all ${activeModule === 'pending' ? 'bg-teal-50 text-teal-700 border-l-4 border-teal-500 shadow-sm' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 border-l-4 border-transparent'}`}>
+                    <nav className="flex-1 space-y-1.5">
+                        <button onClick={() => setActiveModule('pending')} className={`w-full flex items-center justify-between px-4 py-3 rounded-lg text-sm font-bold transition-all ${activeModule === 'pending' ? 'bg-teal-50 text-teal-800 ring-1 ring-teal-200 shadow-sm' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800'}`}>
                             <div className="flex items-center space-x-3">
                                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                                 <span>Pending Requests</span>
                             </div>
-                            {pendingPatients.length > 0 && <span className="bg-rose-500 text-white text-[11px] px-2 py-0.5 rounded-full">{pendingPatients.length}</span>}
+                            {pendingPatients.length > 0 && <span className="bg-rose-500 text-white text-[11px] px-2 py-0.5 rounded-full tabular-nums">{pendingPatients.length}</span>}
                         </button>
 
-                        <button onClick={() => setActiveModule('completed')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg text-sm font-bold transition-all ${activeModule === 'completed' ? 'bg-teal-50 text-teal-700 border-l-4 border-teal-500 shadow-sm' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 border-l-4 border-transparent'}`}>
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                            <span>Completed History</span>
+                        <button onClick={() => setActiveModule('completed')} className={`w-full flex items-center justify-between px-4 py-3 rounded-lg text-sm font-bold transition-all ${activeModule === 'completed' ? 'bg-teal-50 text-teal-800 ring-1 ring-teal-200 shadow-sm' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800'}`}>
+                            <div className="flex items-center space-x-3">
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                <span>Completed History</span>
+                            </div>
+                            {todayCompletedCount > 0 && (
+                                <span className="bg-emerald-100 text-emerald-800 text-[11px] font-bold px-2 py-0.5 rounded-full tabular-nums">{todayCompletedCount}</span>
+                            )}
                         </button>
 
-                        {isCreditDept && (
+                        {ENABLE_CREDIT_PROMISSORY_MODULE && isCreditDept && (
                             <>
-                                <button onClick={() => setActiveModule('promissory')} className={`w-full flex items-center justify-between px-4 py-3 rounded-lg text-sm font-bold transition-all ${activeModule === 'promissory' ? 'bg-teal-50 text-teal-700 border-l-4 border-teal-500 shadow-sm' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 border-l-4 border-transparent'}`}>
+                                <button onClick={() => setActiveModule('promissory')} className={`w-full flex items-center justify-between px-4 py-3 rounded-lg text-sm font-bold transition-all ${activeModule === 'promissory' ? 'bg-teal-50 text-teal-800 ring-1 ring-teal-200 shadow-sm' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800'}`}>
                                     <div className="flex items-center space-x-3">
                                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
                                         <span>Promissory & Balances</span>
@@ -243,7 +319,7 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                                     <span className="bg-slate-200 text-slate-700 text-[11px] px-2 py-0.5 rounded-full font-bold">57k+</span>
                                 </button>
 
-                                <button onClick={() => setActiveModule('reports')} className={`w-full flex items-center justify-between px-4 py-3 rounded-lg text-sm font-bold transition-all ${activeModule === 'reports' ? 'bg-teal-50 text-teal-700 border-l-4 border-teal-500 shadow-sm' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 border-l-4 border-transparent'}`}>
+                                <button onClick={() => setActiveModule('reports')} className={`w-full flex items-center justify-between px-4 py-3 rounded-lg text-sm font-bold transition-all ${activeModule === 'reports' ? 'bg-teal-50 text-teal-800 ring-1 ring-teal-200 shadow-sm' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800'}`}>
                                     <div className="flex items-center space-x-3">
                                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
                                         <span>Reports & SAA Budgets</span>
@@ -256,30 +332,92 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                 </div>
 
                 {/* MAIN CONTENT AREA */}
-                {activeModule === 'promissory' ? (
+                {ENABLE_CREDIT_PROMISSORY_MODULE && activeModule === 'promissory' ? (
                     <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 p-6 flex flex-col overflow-y-auto">
                         <PromissoryMasterlist onOpenReports={() => setActiveModule('reports')} />
                     </div>
-                ) : activeModule === 'reports' ? (
+                ) : ENABLE_CREDIT_PROMISSORY_MODULE && activeModule === 'reports' ? (
                     <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 p-6 flex flex-col overflow-y-auto">
                         <CreditReportsModule onBackToMasterlist={() => setActiveModule('promissory')} />
                     </div>
                 ) : (
                 <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col overflow-hidden relative">
-                    <div className="px-6 py-5 border-b border-slate-200 bg-slate-50 flex flex-col md:flex-row justify-between items-center gap-4 shrink-0">
-                        <h3 className="text-lg font-bold text-slate-800">
-                            {activeModule === 'pending' ? 'Needs Your Approval' : 'Recently Processed'}
-                        </h3>
+                    <div className="px-6 py-5 border-b border-slate-200 bg-slate-50 flex flex-col lg:flex-row justify-between items-stretch lg:items-center gap-4 shrink-0">
+                        <div>
+                            <h3 className="text-lg font-bold text-slate-800">
+                                {activeModule === 'pending' ? 'Needs Your Approval' : 'Completed History'}
+                            </h3>
+                            {activeModule === 'completed' && (
+                                <p className="text-xs text-slate-500 mt-0.5 tabular-nums">
+                                    {historyScope === 'today'
+                                        ? `${scopedHistoryPatients.length} cleared on ${selectedHistoryDate}`
+                                        : `${historyPatients.length} total cleared records (${todayCompletedCount} today)`}
+                                </p>
+                            )}
+                        </div>
                         
-                        <div className="w-full md:w-72 relative">
-                            <svg className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
-                            <input 
-                                type="text" 
-                                value={searchTerm}
-                                onChange={e => setSearchTerm(e.target.value)}
-                                className="w-full pl-9 pr-3 py-2 rounded-lg border-slate-300 shadow-sm focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm transition-all" 
-                                placeholder="Search patient name..."
-                            />
+                        <div className="flex flex-wrap items-center gap-3">
+                            {activeModule === 'completed' && (
+                                <>
+                                    <div className="inline-flex rounded-lg bg-slate-200/70 p-0.5 border border-slate-200">
+                                        <button
+                                            type="button"
+                                            onClick={() => setHistoryScope('today')}
+                                            className={`px-3 py-1.5 rounded-md text-xs font-bold transition-colors ${
+                                                historyScope === 'today'
+                                                    ? 'bg-white text-teal-700 shadow-sm'
+                                                    : 'text-slate-600 hover:text-slate-900'
+                                            }`}
+                                        >
+                                            Within Day
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setHistoryScope('all')}
+                                            className={`px-3 py-1.5 rounded-md text-xs font-bold transition-colors ${
+                                                historyScope === 'all'
+                                                    ? 'bg-white text-teal-700 shadow-sm'
+                                                    : 'text-slate-600 hover:text-slate-900'
+                                            }`}
+                                        >
+                                            All History
+                                        </button>
+                                    </div>
+
+                                    {historyScope === 'today' && (
+                                        <input
+                                            type="date"
+                                            aria-label="Filter completed history date"
+                                            value={selectedHistoryDate}
+                                            onChange={(e) => setSelectedHistoryDate(e.target.value || fallbackToday)}
+                                            className="px-2.5 py-1.5 rounded-lg border-slate-300 shadow-sm focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-xs font-semibold text-slate-700 tabular-nums"
+                                        />
+                                    )}
+
+                                    <a
+                                        href={`/cost-center/reports/print?date=${encodeURIComponent(selectedHistoryDate)}`}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold shadow-sm transition-colors"
+                                    >
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                                        </svg>
+                                        <span>Print Daily Report</span>
+                                    </a>
+                                </>
+                            )}
+
+                            <div className="w-full sm:w-64 relative">
+                                <svg className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                                <input 
+                                    type="text" 
+                                    value={searchTerm}
+                                    onChange={e => setSearchTerm(e.target.value)}
+                                    className="w-full pl-9 pr-3 py-2 rounded-lg border-slate-300 shadow-sm focus:ring-2 focus:ring-teal-500 focus:border-teal-500 text-sm transition-all" 
+                                    placeholder="Search patient name or #..."
+                                />
+                            </div>
                         </div>
                     </div>
 
@@ -304,16 +442,49 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                                         </tr>
                                     ) : (
                                         filteredPatients.map((patient, index) => {
-                                            const waitMinutes = activeModule === 'pending' ? getWaitMinutes(patient.date) : 0;
-                                            const breached = waitMinutes >= 15;
+                                            const wallWaitMinutes = activeModule === 'pending' ? getWaitMinutes(patient.date) : 0;
+                                            const waitMinutes = activeModule === 'pending'
+                                                ? (typeof patient.effective_waiting_minutes === 'number' ? patient.effective_waiting_minutes : wallWaitMinutes)
+                                                : 0;
+                                            const isClosedSchedule = activeModule === 'pending'
+                                                && departmentSchedule?.is_24_7 === false
+                                                && departmentSchedule?.is_open_now === false;
+                                            const breached = !isClosedSchedule && waitMinutes >= 15;
+                                            const pendingRemark = patient.pending_remark;
 
                                             return (
-                                                <tr key={index} className={`hover:bg-slate-50 transition-colors cursor-default ${breached && activeModule === 'pending' ? 'bg-rose-50/30' : ''}`}>
-                                                    <td className={`p-4 border-l-4 ${activeModule === 'completed' ? 'border-emerald-400' : (breached ? 'border-rose-400' : 'border-amber-400')}`}>
-                                                        <div className={`font-bold text-base ${breached && activeModule === 'pending' ? 'text-rose-900' : 'text-slate-800'}`}>{patient.name}</div>
-                                                        <div className="text-xs text-slate-500 mt-1 uppercase tracking-wide font-semibold break-all">
-                                                            {patient.enccode}
+                                                <tr key={patient.enccode || index} className={`hover:bg-slate-50 transition-colors cursor-default ${breached && activeModule === 'pending' ? 'bg-rose-50/30' : ''}`}>
+                                                    <td className="p-4">
+                                                        <div className={`font-bold text-base flex flex-wrap items-center gap-2 ${breached && activeModule === 'pending' ? 'text-rose-900' : 'text-slate-800'}`}>
+                                                            <span>{patient.name}</span>
+                                                            {activeModule === 'pending' && Number(patient.reroute_count) > 0 && (
+                                                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                                                                    Re-routed{Number(patient.reroute_count) > 1 ? ` ×${patient.reroute_count}` : ''}
+                                                                </span>
+                                                            )}
                                                         </div>
+                                                        <div className="text-xs text-slate-500 mt-1 uppercase tracking-wide font-semibold break-all flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                                                            {patient.hospital_number && (
+                                                                <span className="font-mono text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">{patient.hospital_number}</span>
+                                                            )}
+                                                            <span>{patient.enccode}</span>
+                                                        </div>
+                                                        {activeModule === 'pending' && Number(patient.reroute_count) > 0 && patient.reroute_reason && (
+                                                            <div className="mt-1.5 text-xs text-amber-900 font-medium">
+                                                                Re-route reason: {patient.reroute_reason}
+                                                            </div>
+                                                        )}
+                                                        {activeModule === 'pending' && pendingRemark?.remarks && (
+                                                            <div className="mt-2 rounded-lg bg-amber-50 border border-amber-200 px-2.5 py-1.5 text-xs text-amber-950 max-w-md">
+                                                                <span className="font-bold text-amber-900">Pending reason: </span>
+                                                                <span>{pendingRemark.remarks}</span>
+                                                                {pendingRemark.updated_by && (
+                                                                    <span className="text-[11px] text-amber-800/80 ml-1.5">
+                                                                        — {pendingRemark.updated_by}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        )}
                                                     </td>
 
                                                     <td className="p-4 text-slate-600 text-xs">
@@ -325,18 +496,41 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                                                             </div>
                                                         )}
                                                         {activeModule === 'pending' ? (
-                                                            <>Requested: <span className="font-bold">{new Date(patient.date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</span></>
+                                                            <>Requested: <span className="font-bold tabular-nums">{new Date(patient.date).toLocaleTimeString('en-US', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit' })}</span></>
                                                         ) : (
-                                                            <>Cleared: <span className="font-bold">{new Date(patient.cleared_date).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span></>
+                                                            <div className="space-y-0.5">
+                                                                <div>Cleared: <span className="font-bold tabular-nums">{new Date(patient.cleared_date).toLocaleString('en-US', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span></div>
+                                                                {patient.cleared_by && (
+                                                                    <div className="text-[11px] text-slate-500">By: <span className="font-semibold text-slate-700">{patient.cleared_by}</span></div>
+                                                                )}
+                                                            </div>
                                                         )}
                                                     </td>
 
                                                     <td className="p-4 text-center">
                                                         {activeModule === 'pending' ? (
-                                                            <div className={`inline-flex items-center space-x-1 px-2.5 py-1 rounded-md text-xs font-bold ${breached ? 'bg-rose-100 text-rose-700 animate-pulse motion-reduce:animate-none' : 'bg-slate-100 text-slate-600'}`}>
-                                                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                                                                <span>{formatWaitTime(waitMinutes)}</span>
-                                                            </div>
+                                                            isClosedSchedule ? (
+                                                                <div className="inline-flex flex-col items-center">
+                                                                    <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                                                                        {departmentSchedule?.next_open_label || 'Closed (SLA Paused)'}
+                                                                    </span>
+                                                                    <span className="text-[11px] text-slate-500 mt-0.5 tabular-nums">
+                                                                        Routed {formatWaitTime(wallWaitMinutes)} ago
+                                                                    </span>
+                                                                </div>
+                                                            ) : (
+                                                                <div className="inline-flex flex-col items-center">
+                                                                    <div className={`inline-flex items-center space-x-1 px-2.5 py-1 rounded-md text-xs font-bold tabular-nums ${breached ? 'bg-rose-100 text-rose-700 animate-pulse motion-reduce:animate-none' : 'bg-slate-100 text-slate-600'}`}>
+                                                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                                                        <span>{formatWaitTime(waitMinutes)}</span>
+                                                                    </div>
+                                                                    {wallWaitMinutes !== waitMinutes && (
+                                                                        <span className="text-[11px] text-slate-400 mt-0.5 tabular-nums">
+                                                                            Total: {formatWaitTime(wallWaitMinutes)}
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                            )
                                                         ) : (
                                                             <span className="text-xs text-emerald-600 font-bold uppercase tracking-wide flex justify-center items-center">
                                                                 <svg className="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
@@ -347,8 +541,23 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
 
                                                     <td className="p-4 text-center">
                                                         {activeModule === 'pending' ? (
-                                                            <div className="flex justify-center">
+                                                            <div className="flex flex-wrap justify-center gap-2">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => {
+                                                                        setRemarkModalPatient(patient);
+                                                                        setRemarkText(pendingRemark?.remarks || '');
+                                                                    }}
+                                                                    className={`px-3 py-2 text-xs font-bold rounded-lg border transition-colors ${
+                                                                        pendingRemark?.remarks
+                                                                            ? 'bg-amber-50 border-amber-300 text-amber-900 hover:bg-amber-100'
+                                                                            : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
+                                                                    }`}
+                                                                >
+                                                                    {pendingRemark?.remarks ? 'Edit Remark' : 'Remark'}
+                                                                </button>
                                                                 <button 
+                                                                    type="button"
                                                                     onClick={() => openInspectModal(patient.enccode)}
                                                                     className={`px-4 py-2 text-xs font-bold rounded-lg shadow-sm transition-colors flex items-center space-x-1 ${breached ? 'bg-rose-600 hover:bg-rose-700 text-white' : 'bg-[#0f172a] hover:bg-slate-800 text-white'}`}
                                                                 >
@@ -357,7 +566,7 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                                                                 </button>
                                                             </div>
                                                         ) : (
-                                                            <span className="text-[11px] font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded">Overall: {patient.overall_status}</span>
+                                                            <span className="text-[11px] font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded">Overall: {patient.overall_status}</span>
                                                         )}
                                                     </td>
                                                 </tr>
@@ -452,7 +661,7 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                                     </div>
                                     
                                     {/* --- CREDIT & PROMISSORY STATUS CARD --- */}
-                                    {isCreditDept && (
+                                    {ENABLE_CREDIT_PROMISSORY_MODULE && isCreditDept && (
                                         <div className="p-4 bg-white border-b border-slate-200">
                                             <div className="flex justify-between items-center mb-2">
                                                 <span className="text-[11px] font-black uppercase tracking-wider text-slate-400">Promissory Note & Financial Balance Check</span>
@@ -518,12 +727,19 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                                     )}
 
                                     {/* --- ER ALERTS BANNER --- */}
-                                    {(Boolean(modalData?.transaction?.is_oecb) || (Boolean(modalData?.transaction?.has_oxygen) && department === 'Cardio Pulmo')) ? (
+                                    {(Boolean(modalData?.transaction?.is_oecb) || (!Boolean(modalData?.transaction?.is_oecb) && Boolean(modalData?.transaction?.is_for_procedure)) || (Boolean(modalData?.transaction?.has_oxygen) && department === 'Cardio Pulmo')) ? (
                                         <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col gap-2">
                                             {Boolean(modalData?.transaction?.is_oecb) ? (
                                                 <div className="bg-amber-100 border border-amber-300 text-amber-800 px-3 py-2 rounded-lg text-xs font-bold inline-flex items-center w-fit tracking-wide shadow-sm">
                                                     <svg className="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
                                                     OECB PATIENT
+                                                </div>
+                                            ) : null}
+
+                                            {!Boolean(modalData?.transaction?.is_oecb) && Boolean(modalData?.transaction?.is_for_procedure) ? (
+                                                <div className="bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2 text-xs text-indigo-950 shadow-sm w-fit">
+                                                    <span className="font-bold uppercase tracking-wide text-indigo-800 mr-1.5">Non-OECB · For Procedure:</span>
+                                                    <span className="font-semibold">{modalData.transaction.procedure_type || 'Unspecified'}</span>
                                                 </div>
                                             ) : null}
                                             
@@ -540,6 +756,64 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                                             ) : null}
                                         </div>
                                     ) : null}
+
+                                    {/* --- PENDING REASON / REMARK INLINE EDITOR --- */}
+                                    <div className="p-4 bg-amber-50/60 border-b border-slate-200 space-y-2.5">
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <label htmlFor="inspect-pending-remark" className="text-xs font-bold text-slate-700 uppercase tracking-wide">
+                                                Pending Reason / Remark for Ward
+                                            </label>
+                                            <span className="text-[11px] text-slate-500">
+                                                Visible to the originating ward while this clearance remains pending
+                                            </span>
+                                        </div>
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {QUICK_PENDING_REASONS.map((preset) => (
+                                                <button
+                                                    key={preset}
+                                                    type="button"
+                                                    onClick={() => setInlineRemarkText(preset)}
+                                                    className="px-2.5 py-1 rounded-md border border-amber-300 bg-white hover:bg-amber-100 text-[11px] font-semibold text-amber-950 transition-colors"
+                                                >
+                                                    {preset}
+                                                </button>
+                                            ))}
+                                        </div>
+                                        <div className="flex flex-col sm:flex-row gap-2">
+                                            <input
+                                                id="inspect-pending-remark"
+                                                type="text"
+                                                maxLength={500}
+                                                value={inlineRemarkText}
+                                                onChange={(e) => setInlineRemarkText(e.target.value)}
+                                                placeholder="Explain why this patient cannot be cleared yet..."
+                                                className="flex-1 px-3 py-2 rounded-lg border-slate-300 bg-white text-sm focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+                                            />
+                                            <div className="flex items-center gap-2 shrink-0">
+                                                {inlineRemarkText.trim() !== '' && (
+                                                    <button
+                                                        type="button"
+                                                        disabled={isSavingRemark}
+                                                        onClick={() => {
+                                                            setInlineRemarkText('');
+                                                            submitPendingRemark(activeEnccode, '');
+                                                        }}
+                                                        className="px-3 py-2 text-xs font-bold text-slate-600 bg-white border border-slate-300 hover:bg-slate-100 rounded-lg disabled:opacity-50"
+                                                    >
+                                                        Clear
+                                                    </button>
+                                                )}
+                                                <button
+                                                    type="button"
+                                                    disabled={isSavingRemark}
+                                                    onClick={() => submitPendingRemark(activeEnccode, inlineRemarkText)}
+                                                    className="px-4 py-2 text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white rounded-lg shadow-sm disabled:opacity-50 transition-colors"
+                                                >
+                                                    {isSavingRemark ? 'Saving...' : 'Save Remark'}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
 
                                     <div className="divide-y divide-slate-100 max-h-[50vh] overflow-y-auto">
                                         {getActiveOrders().length === 0 ? (
@@ -584,6 +858,104 @@ export default function CostCenter({ department, pendingPatients = [], historyPa
                                 </div>
                             ) : null}
                         </div>
+            </Modal>
+
+            {/* --- PENDING REMARK MODAL (QUICK ROW EDIT) --- */}
+            <Modal
+                show={Boolean(remarkModalPatient)}
+                onClose={() => { if (!isSavingRemark) setRemarkModalPatient(null); }}
+                closeable={!isSavingRemark}
+                maxWidth="md"
+                zIndexClass="z-[200]"
+            >
+                <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+                    <div>
+                        <h3 className="text-base font-bold text-slate-800">Pending Clearance Remark</h3>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                            {remarkModalPatient?.name} {remarkModalPatient?.ward ? `· ${remarkModalPatient.ward}` : ''}
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        aria-label="Close modal"
+                        onClick={() => { if (!isSavingRemark) setRemarkModalPatient(null); }}
+                        className="text-slate-400 hover:text-slate-600 p-1 rounded-lg transition-colors"
+                    >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+                <form
+                    onSubmit={(e) => {
+                        e.preventDefault();
+                        if (!remarkModalPatient) return;
+                        submitPendingRemark(remarkModalPatient.enccode, remarkText, { closeModal: true });
+                    }}
+                    className="p-6 space-y-4"
+                >
+                    <div>
+                        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-2">Quick Reasons</div>
+                        <div className="flex flex-wrap gap-1.5">
+                            {QUICK_PENDING_REASONS.map((preset) => (
+                                <button
+                                    key={preset}
+                                    type="button"
+                                    onClick={() => setRemarkText(preset)}
+                                    className="px-2.5 py-1 rounded-md border border-slate-300 bg-slate-50 hover:bg-amber-50 hover:border-amber-300 text-[11px] font-semibold text-slate-700 transition-colors"
+                                >
+                                    {preset}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div>
+                        <label htmlFor="quick-pending-remark" className="block text-xs font-bold text-slate-600 uppercase tracking-wide mb-1.5">
+                            Reason why patient is still pending at {department}
+                        </label>
+                        <textarea
+                            id="quick-pending-remark"
+                            rows="3"
+                            maxLength={500}
+                            value={remarkText}
+                            onChange={(e) => setRemarkText(e.target.value)}
+                            placeholder="Enter reason (or leave empty to remove existing remark)..."
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 resize-y"
+                            autoFocus
+                        />
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100">
+                        <div>
+                            {remarkModalPatient?.pending_remark?.remarks && (
+                                <button
+                                    type="button"
+                                    disabled={isSavingRemark}
+                                    onClick={() => submitPendingRemark(remarkModalPatient.enccode, '', { closeModal: true })}
+                                    className="px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50 rounded-lg transition-colors disabled:opacity-50"
+                                >
+                                    Remove Remark
+                                </button>
+                            )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button
+                                type="button"
+                                disabled={isSavingRemark}
+                                onClick={() => setRemarkModalPatient(null)}
+                                className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-lg border border-slate-200 disabled:opacity-50"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="submit"
+                                disabled={isSavingRemark}
+                                className="px-4 py-2 text-xs font-bold bg-teal-600 hover:bg-teal-700 text-white rounded-lg shadow-sm disabled:opacity-50 transition-colors"
+                            >
+                                {isSavingRemark ? 'Saving...' : 'Save Remark'}
+                            </button>
+                        </div>
+                    </div>
+                </form>
             </Modal>
 
             {/* --- CUSTOM CONFIRMATION MODAL --- */}

@@ -41,6 +41,28 @@ function getDispositionTheme(label) {
     };
 }
 
+const CATEGORY_THEME = {
+    oecb: {
+        bar: 'bg-amber-500',
+        dot: 'bg-amber-500',
+        badge: 'bg-amber-50 text-amber-800 border-amber-200',
+    },
+    non_oecb: {
+        bar: 'bg-slate-500',
+        dot: 'bg-slate-500',
+        badge: 'bg-slate-100 text-slate-800 border-slate-300',
+    },
+    for_procedure: {
+        bar: 'bg-indigo-600',
+        dot: 'bg-indigo-600',
+        badge: 'bg-indigo-50 text-indigo-800 border-indigo-200',
+    },
+};
+
+function getCategoryTheme(key) {
+    return CATEGORY_THEME[key] || CATEGORY_THEME.non_oecb;
+}
+
 function formatLocalDate(date) {
     const pad = (n) => String(n).padStart(2, '0');
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
@@ -53,6 +75,7 @@ export default function BillingReportsPanel({ liveSyncTick = 0 }) {
         disposition: 'all',
         ward: 'all',
         status: 'all_routed',
+        category: 'all',
         search: '',
         starts_with: '',
         layout: 'alphabetical',
@@ -65,6 +88,7 @@ export default function BillingReportsPanel({ liveSyncTick = 0 }) {
         records: [],
         total: 0,
         dispositionSummary: [],
+        categorySummary: [],
         availableDispositions: [],
         availableWards: [],
     });
@@ -86,6 +110,7 @@ export default function BillingReportsPanel({ liveSyncTick = 0 }) {
         if (f.disposition && f.disposition !== 'all') params.set('disposition', f.disposition);
         if (f.ward && f.ward !== 'all') params.set('ward', f.ward);
         if (f.status) params.set('status', f.status);
+        if (f.category && f.category !== 'all') params.set('category', f.category);
         if (f.search.trim()) params.set('search', f.search.trim());
         if (f.starts_with) params.set('starts_with', f.starts_with);
         params.set('layout', f.layout);
@@ -117,6 +142,7 @@ export default function BillingReportsPanel({ liveSyncTick = 0 }) {
                 records: res.data.records || [],
                 total: res.data.total || 0,
                 dispositionSummary: res.data.dispositionSummary || [],
+                categorySummary: res.data.categorySummary || [],
                 availableDispositions: res.data.availableDispositions || [],
                 availableWards: res.data.availableWards || [],
             });
@@ -211,6 +237,7 @@ export default function BillingReportsPanel({ liveSyncTick = 0 }) {
             disposition: 'all',
             ward: 'all',
             status: 'all_routed',
+            category: 'all',
             search: '',
             starts_with: '',
             layout: 'alphabetical',
@@ -224,6 +251,7 @@ export default function BillingReportsPanel({ liveSyncTick = 0 }) {
         filters.disposition !== 'all' ||
         filters.ward !== 'all' ||
         filters.status !== 'all_routed' ||
+        filters.category !== 'all' ||
         filters.search.trim() ||
         filters.starts_with
     );
@@ -253,6 +281,14 @@ export default function BillingReportsPanel({ liveSyncTick = 0 }) {
         return map;
     }, [reportData.dispositionSummary]);
 
+    const categoryTotalsLookup = useMemo(() => {
+        const map = {};
+        reportData.categorySummary.forEach((item) => {
+            map[item.key] = item;
+        });
+        return map;
+    }, [reportData.categorySummary]);
+
     const totalPages = Math.max(1, Math.ceil(reportData.records.length / PAGE_SIZE));
 
     useEffect(() => {
@@ -264,13 +300,18 @@ export default function BillingReportsPanel({ liveSyncTick = 0 }) {
     }, [reportData.records, currentPage]);
 
     const groupedPageSections = useMemo(() => {
-        if (filters.layout !== 'by_disposition') return [];
+        if (filters.layout !== 'by_disposition' && filters.layout !== 'by_category') return [];
         const groups = [];
         const map = new Map();
         pagedRecords.forEach((row) => {
-            const key = row.disposition || 'Unspecified';
+            const key = filters.layout === 'by_category'
+                ? (row.classification_key || 'non_oecb')
+                : (row.disposition || 'Unspecified');
+            const label = filters.layout === 'by_category'
+                ? (row.classification || 'Non-OECB')
+                : key;
             if (!map.has(key)) {
-                const section = { disposition: key, items: [] };
+                const section = { key, label, items: [] };
                 map.set(key, section);
                 groups.push(section);
             }
@@ -305,20 +346,29 @@ export default function BillingReportsPanel({ liveSyncTick = 0 }) {
                     </td>
                     <td className="px-4 py-2.5">
                         <div className="text-xs font-semibold text-teal-800">{row.room_ward}</div>
-                        {(row.is_oecb || row.has_oxygen) && (
-                            <div className="flex items-center gap-1 mt-0.5">
-                                {row.is_oecb && (
-                                    <span className="inline-block px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200 text-[11px] font-bold leading-none">
-                                        OECB
+                        <div className="flex flex-wrap items-center gap-1 mt-1">
+                            {(() => {
+                                const catKey = row.classification_key || (row.is_oecb ? 'oecb' : row.is_for_procedure ? 'for_procedure' : 'non_oecb');
+                                const catLabel = row.classification || (row.is_oecb ? 'OECB' : row.is_for_procedure ? 'For Procedure' : 'Non-OECB');
+                                const catTheme = getCategoryTheme(catKey);
+                                return (
+                                    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[11px] font-bold leading-none ${catTheme.badge}`}>
+                                        <span className={`w-1.5 h-1.5 rounded-full ${catTheme.dot}`} aria-hidden="true"></span>
+                                        <span>{catLabel}</span>
                                     </span>
-                                )}
-                                {row.has_oxygen && (
-                                    <span className="inline-block px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 border border-sky-200 text-[11px] font-bold leading-none">
-                                        O2
-                                    </span>
-                                )}
-                            </div>
-                        )}
+                                );
+                            })()}
+                            {row.is_for_procedure && row.procedure_type && (
+                                <span className="inline-block px-1.5 py-0.5 rounded bg-indigo-100/70 text-indigo-900 border border-indigo-200 text-[11px] font-semibold leading-none">
+                                    {row.procedure_type}
+                                </span>
+                            )}
+                            {row.has_oxygen && (
+                                <span className="inline-block px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 border border-sky-200 text-[11px] font-bold leading-none">
+                                    O2
+                                </span>
+                            )}
+                        </div>
                     </td>
                     <td className="px-4 py-2.5 whitespace-nowrap">
                         <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-xs font-bold border ${dispTheme.badge}`}>
@@ -437,6 +487,18 @@ export default function BillingReportsPanel({ liveSyncTick = 0 }) {
                             >
                                 Grouped by Disposition
                             </button>
+                            <button
+                                type="button"
+                                onClick={() => setFilters((prev) => ({ ...prev, layout: 'by_category' }))}
+                                aria-pressed={filters.layout === 'by_category'}
+                                className={`px-3 py-1.5 rounded-md text-xs font-bold transition-colors ${
+                                    filters.layout === 'by_category'
+                                        ? 'bg-white text-slate-900 shadow-sm'
+                                        : 'text-slate-600 hover:text-slate-900'
+                                }`}
+                            >
+                                Grouped by OECB / Procedure
+                            </button>
                         </div>
 
                         <button
@@ -481,7 +543,24 @@ export default function BillingReportsPanel({ liveSyncTick = 0 }) {
 
                 {/* Dropdown Filters + Date Range */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3 items-end">
-                    <div className="lg:col-span-3">
+                    <div className="lg:col-span-2">
+                        <label htmlFor="report-category" className="block text-[11px] font-bold uppercase text-slate-500 mb-1">
+                            Classification
+                        </label>
+                        <select
+                            id="report-category"
+                            value={filters.category}
+                            onChange={(e) => setFilters((prev) => ({ ...prev, category: e.target.value }))}
+                            className="w-full px-3 py-2 rounded-lg border-slate-300 text-xs font-semibold focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+                        >
+                            <option value="all">All Categories</option>
+                            <option value="oecb">OECB Only</option>
+                            <option value="non_oecb">Non-OECB Only</option>
+                            <option value="for_procedure">For Procedure Only</option>
+                        </select>
+                    </div>
+
+                    <div className="lg:col-span-2">
                         <label htmlFor="report-disposition" className="block text-[11px] font-bold uppercase text-slate-500 mb-1">
                             Type of Disposition
                         </label>
@@ -515,7 +594,7 @@ export default function BillingReportsPanel({ liveSyncTick = 0 }) {
                         </select>
                     </div>
 
-                    <div className="lg:col-span-3">
+                    <div className="lg:col-span-2">
                         <label htmlFor="report-status" className="block text-[11px] font-bold uppercase text-slate-500 mb-1">
                             Routing Status
                         </label>
@@ -630,6 +709,79 @@ export default function BillingReportsPanel({ liveSyncTick = 0 }) {
                     )}
                 </div>
 
+                {/* Classification Breakdown (OECB / Non-OECB / For Procedure) */}
+                {reportData.categorySummary.length > 0 && (
+                    <div className="pt-2 border-t border-slate-100 space-y-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-[11px] font-bold uppercase text-slate-500">
+                                OECB / Non-OECB / For Procedure Split
+                            </span>
+                            {filters.layout !== 'by_category' && (
+                                <button
+                                    type="button"
+                                    onClick={() => setFilters((prev) => ({ ...prev, layout: 'by_category' }))}
+                                    className="text-[11px] font-bold text-teal-700 hover:text-teal-900 underline"
+                                >
+                                    Separate into Sections
+                                </button>
+                            )}
+                        </div>
+                        <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden flex gap-px" aria-hidden="true">
+                            {reportData.categorySummary.filter((item) => item.count > 0).map((item) => {
+                                const theme = getCategoryTheme(item.key);
+                                return (
+                                    <div
+                                        key={item.key}
+                                        className={`${theme.bar} h-full transition-all duration-300`}
+                                        style={{ width: `${Math.max(item.percentage, 0.5)}%` }}
+                                        title={`${item.label}: ${item.count.toLocaleString()} (${item.percentage}%)`}
+                                    />
+                                );
+                            })}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter by patient classification">
+                            <button
+                                type="button"
+                                onClick={() => setFilters((prev) => ({ ...prev, category: 'all' }))}
+                                aria-pressed={filters.category === 'all'}
+                                className={`px-2.5 py-1 rounded-lg border text-xs font-bold tabular-nums transition-colors ${
+                                    filters.category === 'all'
+                                        ? 'bg-slate-900 text-white border-slate-900'
+                                        : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                                }`}
+                            >
+                                All Categories ({reportData.total.toLocaleString()})
+                            </button>
+                            {reportData.categorySummary.map((item) => {
+                                const isActive = filters.category === item.key;
+                                const theme = getCategoryTheme(item.key);
+                                return (
+                                    <button
+                                        key={item.key}
+                                        type="button"
+                                        onClick={() => setFilters((prev) => ({
+                                            ...prev,
+                                            category: isActive ? 'all' : item.key,
+                                        }))}
+                                        aria-pressed={isActive}
+                                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold tabular-nums transition-colors ${
+                                            isActive
+                                                ? 'bg-teal-600 text-white border-teal-700'
+                                                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                                        }`}
+                                    >
+                                        <span className={`w-2 h-2 rounded-full ${isActive ? 'bg-white' : theme.dot}`} aria-hidden="true"></span>
+                                        <span>{item.label}</span>
+                                        <span className={isActive ? 'text-teal-100' : 'text-slate-500'}>
+                                            {item.count.toLocaleString()} ({item.percentage}%)
+                                        </span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
+
                 {/* Disposition Distribution Bar & Clickable Breakdown */}
                 {reportData.dispositionSummary.length > 0 && (
                     <div className="pt-2 border-t border-slate-100 space-y-2">
@@ -738,18 +890,23 @@ export default function BillingReportsPanel({ liveSyncTick = 0 }) {
                             </button>
                         )}
                     </div>
-                ) : filters.layout === 'by_disposition' ? (
+                ) : (filters.layout === 'by_disposition' || filters.layout === 'by_category') ? (
                     <div className="divide-y divide-slate-200">
                         {groupedPageSections.map((group) => {
-                            const totalInfo = dispositionTotalsLookup[group.disposition];
-                            const dispTheme = getDispositionTheme(group.disposition);
+                            const isCat = filters.layout === 'by_category';
+                            const totalInfo = isCat
+                                ? categoryTotalsLookup[group.key]
+                                : dispositionTotalsLookup[group.key];
+                            const theme = isCat
+                                ? getCategoryTheme(group.key)
+                                : getDispositionTheme(group.key);
                             return (
-                                <div key={group.disposition}>
+                                <div key={group.key}>
                                     <div className="px-6 py-2.5 bg-slate-100 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 sticky top-0 z-10">
                                         <div className="flex items-center gap-2">
-                                            <span className={`w-2.5 h-2.5 rounded-full ${dispTheme.dot}`} aria-hidden="true"></span>
+                                            <span className={`w-2.5 h-2.5 rounded-full ${theme.dot}`} aria-hidden="true"></span>
                                             <span className="text-xs font-extrabold uppercase tracking-wider text-slate-900">
-                                                Disposition: {group.disposition}
+                                                {isCat ? `Classification: ${group.label}` : `Disposition: ${group.label}`}
                                             </span>
                                         </div>
                                         <span className="text-xs font-mono tabular-nums font-bold text-slate-700">
@@ -764,7 +921,7 @@ export default function BillingReportsPanel({ liveSyncTick = 0 }) {
                                                 <th className="px-4 py-2.5 w-14">#</th>
                                                 <th className="px-4 py-2.5">Patient Name ({filters.sort_dir === 'desc' ? 'Z–A' : 'A–Z'})</th>
                                                 <th className="px-4 py-2.5">Hospital #</th>
-                                                <th className="px-4 py-2.5">Ward</th>
+                                                <th className="px-4 py-2.5">Ward &amp; Tags</th>
                                                 <th className="px-4 py-2.5">Disposition</th>
                                                 <th className="px-4 py-2.5">Status</th>
                                                 <th className="px-4 py-2.5">Routed Date</th>

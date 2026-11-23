@@ -3,8 +3,14 @@
 namespace App\Http\Controllers;
 
 use App\Models\ClearanceTransaction;
+use App\Models\ClearancePendingRemark;
+use App\Models\ClearanceRerouteHistory;
+use App\Models\Department;
+use App\Services\DepartmentOperatingHours;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use App\Models\ClearanceLog;
 
@@ -445,20 +451,312 @@ class ClearanceController extends Controller
             'user_id' => $request->user()->id, 
         ]);
 
+        // Clear any pending remarks for this department once it signs off
+        ClearancePendingRemark::where('enccode', $request->enccode)
+            ->get()
+            ->filter(fn ($remark) => BillingController::departmentsMatch($request->department, (string) $remark->department))
+            ->each->delete();
+
         self::recalculateStatus($request->enccode);
 
         return back();
     }
+
+    /**
+     * Save or clear a pending remark explaining why a routed patient is still pending at a cost center.
+     */
+    public function storePendingRemark(Request $request)
+    {
+        $validated = $request->validate([
+            'enccode' => 'required|string|exists:clearance_transactions,enccode',
+            'department' => 'nullable|string|max:120',
+            'remarks' => 'nullable|string|max:500',
+        ]);
+
+        $user = $request->user();
+        $userDept = trim((string) ($user->department ?? ''));
+        $isNicuWard = strtoupper($userDept) === 'NICU' || str_contains(strtolower($userDept), 'neonatal');
+        $isCostCenter = $this->isCostCenterDepartment($userDept);
+
+        if (!$isCostCenter && !$isNicuWard) {
+            abort(403, 'Only cost center stations can record pending clearance remarks.');
+        }
+
+        // NICU ward acts as a cost center only for incoming NICU clearances; otherwise lock to the user's cost center.
+        $targetDept = $isNicuWard && strtoupper(trim((string) ($validated['department'] ?? ''))) === 'NICU'
+            ? 'NICU'
+            : (BillingController::resolveCanonicalCostCenter($userDept) ?? $userDept);
+
+        $remarksText = trim((string) ($validated['remarks'] ?? ''));
+
+        $existingMatches = ClearancePendingRemark::where('enccode', $validated['enccode'])
+            ->get()
+            ->filter(fn ($r) => BillingController::departmentsMatch($targetDept, (string) $r->department));
+
+        if ($remarksText === '') {
+            $existingMatches->each->delete();
+            return back();
+        }
+
+        // Remove any legacy alias rows before upserting under the canonical department name
+        $existingMatches
+            ->filter(fn ($r) => $r->department !== $targetDept)
+            ->each->delete();
+
+        ClearancePendingRemark::updateOrCreate(
+            [
+                'enccode' => $validated['enccode'],
+                'department' => $targetDept,
+            ],
+            [
+                'user_id' => $user->id,
+                'remarks' => $remarksText,
+            ]
+        );
+
+        return back();
+    }
+
+    /**
+     * Render a printable daily completed history report for the logged-in cost center.
+     */
+    public function printCostCenterDailyReport(Request $request)
+    {
+        $user = $request->user();
+        $userDept = trim((string) ($user->department ?? ''));
+
+        if (!$this->isCostCenterDepartment($userDept)) {
+            abort(403, 'Unauthorized access to cost center daily reports.');
+        }
+
+        $todayManila = now('Asia/Manila')->toDateString();
+        $rawDate = trim((string) $request->query('date', $todayManila));
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $rawDate)) {
+            $rawDate = $todayManila;
+        }
+
+        try {
+            $selectedDate = Carbon::createFromFormat('Y-m-d', $rawDate, 'Asia/Manila');
+        } catch (\Throwable $e) {
+            $rawDate = $todayManila;
+            $selectedDate = Carbon::createFromFormat('Y-m-d', $rawDate, 'Asia/Manila');
+        }
+
+        $startOfDay = $selectedDate->copy()->startOfDay();
+        $endOfDay = $selectedDate->copy()->endOfDay();
+        $canonicalDept = BillingController::resolveCanonicalCostCenter($userDept) ?? $userDept;
+
+        $logs = ClearanceLog::whereBetween('created_at', [$startOfDay, $endOfDay])
+            ->with(['transaction', 'user:id,name'])
+            ->orderBy('created_at', 'desc')
+            ->get()
+            ->filter(function ($log) use ($canonicalDept, $userDept) {
+                if (!$log->transaction || $log->transaction->overall_status === 'Cancelled') {
+                    return false;
+                }
+                return strcasecmp(trim((string) $log->department), $userDept) === 0
+                    || BillingController::departmentsMatch($canonicalDept, (string) $log->department);
+            })
+            ->unique('enccode')
+            ->values();
+
+        $operatingHours = new DepartmentOperatingHours();
+        $departmentSchedule = $operatingHours->getStatusAt($canonicalDept);
+
+        $records = $logs->map(function ($log) use ($canonicalDept, $operatingHours) {
+            $txn = $log->transaction;
+            $metrics = ($txn && $txn->created_at)
+                ? $operatingHours->calculateMetrics($canonicalDept, $txn->created_at, $log->created_at)
+                : null;
+            $turnaroundSec = $metrics ? $metrics['effective_seconds'] : null;
+            $wallTurnaroundSec = $metrics ? $metrics['wall_seconds'] : null;
+
+            return [
+                'enccode' => $txn->enccode,
+                'hospital_number' => $txn->hospital_number ?: '—',
+                'patient_name' => $txn->patient_name,
+                'room_ward' => $txn->room_ward ?: 'Unspecified',
+                'disposition' => $txn->disposition ?: '—',
+                'diagnosis' => $txn->diagnosis ?: '—',
+                'overall_status' => $txn->overall_status,
+                'cleared_by' => $log->user->name ?? 'Staff',
+                'cleared_time' => $log->created_at->timezone('Asia/Manila')->format('h:i A'),
+                'routed_time' => $txn->created_at ? $txn->created_at->timezone('Asia/Manila')->format('h:i A') : '—',
+                'turnaround_formatted' => $turnaroundSec !== null ? BillingController::formatDuration($turnaroundSec) : '—',
+                'wall_turnaround_formatted' => $wallTurnaroundSec !== null ? BillingController::formatDuration($wallTurnaroundSec) : '—',
+                'off_hours_cleared' => $metrics ? $metrics['off_hours_cleared'] : false,
+            ];
+        })->values()->all();
+
+        return Inertia::render('Dashboard/PrintCostCenterReport', [
+            'department' => $userDept,
+            'departmentSchedule' => $departmentSchedule,
+            'reportDate' => $rawDate,
+            'reportDateFormatted' => $selectedDate->format('F d, Y'),
+            'generatedAt' => now('Asia/Manila')->format('F d, Y h:i A'),
+            'total' => count($records),
+            'records' => $records,
+        ]);
+    }
+
+    /**
+     * Re-route a previously cleared (or archived) patient from an admitted ward back to pending clearance.
+     * Excluded for ER, Outpatient/HDU, Billing, Supervisor, Cost Centers, and ICT/Admin.
+     */
+    public function rerouteTransaction(Request $request)
+    {
+        $validated = $request->validate([
+            'enccode' => 'required|string|exists:clearance_transactions,enccode',
+            'reason' => 'nullable|string|max:500',
+        ]);
+
+        $user = $request->user();
+        $userDept = trim((string) ($user->department ?? ''));
+
+        if (!$this->isAdmittedWardDepartment($userDept)) {
+            abort(403, 'Re-route clearance is only available to admitted ward stations.');
+        }
+
+        $tx = ClearanceTransaction::where('enccode', $validated['enccode'])->firstOrFail();
+
+        if (strcasecmp(trim((string) $tx->room_ward), $userDept) !== 0) {
+            abort(403, 'You can only re-route patients belonging to your own ward.');
+        }
+
+        if (!in_array($tx->overall_status, ['Cleared', 'Archived'], true)) {
+            return back()->withErrors([
+                'reroute' => 'Only cleared or archived patients can be re-routed.',
+            ]);
+        }
+
+        $reason = filled($validated['reason'] ?? null) ? trim((string) $validated['reason']) : null;
+        $now = now();
+
+        DB::transaction(function () use ($tx, $user, $reason, $now) {
+            $existingLogs = ClearanceLog::where('enccode', $tx->enccode)
+                ->with('user:id,name')
+                ->orderBy('created_at', 'asc')
+                ->get();
+
+            $previousLogs = $existingLogs->map(fn ($log) => [
+                'department' => $log->department,
+                'cleared_by' => $log->user->name ?? 'Staff',
+                'cleared_at' => $log->created_at?->toIso8601String(),
+            ])->values()->all();
+
+            $nextCycle = ((int) $tx->reroute_count) + 1;
+
+            ClearanceRerouteHistory::create([
+                'enccode' => $tx->enccode,
+                'cycle_number' => $nextCycle,
+                'previous_status' => $tx->overall_status,
+                'previous_routed_at' => $tx->created_at,
+                'previous_cleared_at' => $tx->updated_at,
+                'previous_logs' => $previousLogs,
+                'reroute_reason' => $reason,
+                'rerouted_by' => $user->name,
+                'rerouted_by_user_id' => $user->id,
+            ]);
+
+            ClearanceLog::where('enccode', $tx->enccode)->delete();
+            ClearancePendingRemark::where('enccode', $tx->enccode)->delete();
+
+            $tx->overall_status = 'Routing in Progress';
+            $tx->reroute_count = $nextCycle;
+            $tx->reroute_reason = $reason;
+            $tx->rerouted_by = $user->name;
+            $tx->rerouted_at = $now;
+            // Reset active routing clock so Day 2 turnaround / SLA timers start fresh
+            $tx->created_at = $now;
+            $tx->updated_at = $now;
+            $tx->save();
+        });
+
+        return back();
+    }
+
+    private function isAdmittedWardDepartment(string $deptName): bool
+    {
+        if ($deptName === '') {
+            return false;
+        }
+
+        $deptLower = strtolower(trim($deptName));
+
+        if ($deptName === 'ICT / Admin' || str_contains($deptLower, 'supervisor')) {
+            return false;
+        }
+
+        if (
+            in_array($deptLower, ['billing & claims', 'billing', 'claims', 'billing and claims', 'head of billing & claims', 'head of billing and claims', 'billing head'], true)
+            || str_contains($deptLower, 'billing')
+            || str_contains($deptLower, 'claims')
+        ) {
+            return false;
+        }
+
+        $deptRecord = Department::where('name', $deptName)->first();
+        if ($deptRecord && $deptRecord->category === 'Cost Center') {
+            return false;
+        }
+
+        $nonWardCostCenters = [
+            'Laboratory', 'Radiology', 'Pharmacy', 'Cardiopulmonary', 'CSR', 'Cardio Pulmo',
+            'OR', 'LR/DR', 'LR / DR', 'HDU', 'Operating Room', 'Delivery Room', 'Dialysis',
+            'Credit and Collection', 'Credit & Collection',
+        ];
+        if (in_array($deptName, $nonWardCostCenters, true)) {
+            return false;
+        }
+
+        $isErWard = $deptLower === 'emergency room' || $deptLower === 'er' || str_contains($deptLower, 'emergency');
+        $isOutpatientWard = str_contains($deptLower, 'outpatient')
+            || str_contains($deptLower, 'opd')
+            || str_contains($deptLower, 'hemodialysis')
+            || str_contains($deptLower, 'dialysis')
+            || str_contains($deptLower, 'hdu');
+
+        return !$isErWard && !$isOutpatientWard;
+    }
+
+    private function isCostCenterDepartment(string $deptName): bool
+    {
+        if ($deptName === '') {
+            return false;
+        }
+        $deptRecord = Department::where('name', $deptName)->first();
+        if ($deptRecord && $deptRecord->category === 'Cost Center') {
+            return true;
+        }
+        if (BillingController::resolveCanonicalCostCenter($deptName) !== null) {
+            return true;
+        }
+        $costCenters = ['Laboratory', 'Radiology', 'Pharmacy', 'Cardiopulmonary', 'CSR', 'Cardio Pulmo', 'OR', 'LR/DR', 'LR / DR', 'HDU', 'Operating Room', 'Delivery Room', 'Dialysis', 'Credit and Collection', 'Credit & Collection'];
+        return in_array($deptName, $costCenters, true);
+    }
     
     public function storeTransaction(Request $request)
     {
+        $wardDept = strtolower(trim($request->user()->department ?? ''));
+        $isErWard = $wardDept === 'emergency room' || $wardDept === 'er' || str_contains($wardDept, 'emergency');
+        $isOutpatientWard = str_contains($wardDept, 'outpatient') || str_contains($wardDept, 'opd') || str_contains($wardDept, 'hemodialysis') || str_contains($wardDept, 'dialysis') || str_contains($wardDept, 'hdu');
+        $allowsAdditionalClearance = !$isErWard && !$isOutpatientWard;
+
         $request->validate([
             'enccode' => 'required|string',
             'hospital_number' => 'required|string',
             'patient_name' => 'required|string',
             'arrival_datetime' => 'nullable|date',
             'disposition' => 'nullable|string',
+            'diagnosis' => 'nullable|string|max:1000',
             'is_oecb' => 'nullable|boolean',
+            'is_for_procedure' => 'nullable|boolean',
+            'procedure_type' => [
+                Rule::requiredIf(fn () => $isErWard && !$request->boolean('is_oecb') && $request->boolean('is_for_procedure')),
+                'nullable',
+                'string',
+                'max:255',
+            ],
             'has_oxygen' => 'nullable|boolean',
             'oxygen_remarks' => 'nullable|string',
             'requires_or' => 'nullable|boolean',
@@ -468,10 +766,11 @@ class ClearanceController extends Controller
         $existing = ClearanceTransaction::where('enccode', $request->enccode)->first();
         $initialStatus = ($existing && $existing->overall_status !== 'Cancelled') ? $existing->overall_status : 'Routing in Progress';
 
-        $wardDept = strtolower(trim($request->user()->department ?? ''));
-        $isErWard = $wardDept === 'emergency room' || $wardDept === 'er' || str_contains($wardDept, 'emergency');
-        $isOutpatientWard = str_contains($wardDept, 'outpatient') || str_contains($wardDept, 'opd') || str_contains($wardDept, 'hemodialysis') || str_contains($wardDept, 'dialysis') || str_contains($wardDept, 'hdu');
-        $allowsAdditionalClearance = !$isErWard && !$isOutpatientWard;
+        $isOecb = (bool) ($request->is_oecb ?? false);
+        $isForProcedure = $isErWard && !$isOecb && (bool) ($request->is_for_procedure ?? false);
+        $procedureType = $isForProcedure && filled($request->procedure_type)
+            ? trim((string) $request->procedure_type)
+            : null;
 
         ClearanceTransaction::updateOrCreate(
             ['enccode' => $request->enccode],
@@ -480,9 +779,14 @@ class ClearanceController extends Controller
                 'patient_name' => $request->patient_name,
                 'arrival_datetime' => $request->arrival_datetime,
                 'disposition' => $request->disposition,
+                'diagnosis' => $allowsAdditionalClearance && filled($request->diagnosis)
+                    ? trim((string) $request->diagnosis)
+                    : null,
                 'room_ward' => $request->user()->department, 
                 'overall_status' => $initialStatus,
-                'is_oecb' => $request->is_oecb ?? false,
+                'is_oecb' => $isOecb,
+                'is_for_procedure' => $isForProcedure,
+                'procedure_type' => $procedureType,
                 'has_oxygen' => $request->has_oxygen ?? false,
                 'oxygen_remarks' => $request->oxygen_remarks,
                 'requires_or' => $allowsAdditionalClearance && (bool) ($request->requires_or ?? false),

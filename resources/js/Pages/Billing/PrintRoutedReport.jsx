@@ -5,6 +5,7 @@ export default function PrintRoutedReport({
     records = [],
     total = 0,
     dispositionSummary = [],
+    categorySummary = [],
     filters = {},
     generatedAt = '',
 }) {
@@ -18,17 +19,19 @@ export default function PrintRoutedReport({
         return () => clearTimeout(timer);
     }, []);
 
-    const layout = filters.layout === 'by_disposition' ? 'by_disposition' : 'alphabetical';
+    const layout = ['by_disposition', 'by_category'].includes(filters.layout) ? filters.layout : 'alphabetical';
     const sortDir = filters.sort_dir === 'desc' ? 'desc' : 'asc';
 
     const groupedSections = useMemo(() => {
-        if (layout !== 'by_disposition') return [];
+        if (layout !== 'by_disposition' && layout !== 'by_category') return [];
         const groups = [];
         const map = new Map();
         records.forEach((row) => {
-            const key = row.disposition || 'Unspecified';
+            const key = layout === 'by_category'
+                ? (row.classification || (row.is_oecb ? 'OECB' : row.is_for_procedure ? 'For Procedure' : 'Non-OECB'))
+                : (row.disposition || 'Unspecified');
             if (!map.has(key)) {
-                const section = { disposition: key, items: [] };
+                const section = { key, title: key, items: [] };
                 map.set(key, section);
                 groups.push(section);
             }
@@ -44,12 +47,20 @@ export default function PrintRoutedReport({
         if (filters.disposition && filters.disposition !== 'all') params.set('disposition', filters.disposition);
         if (filters.ward && filters.ward !== 'all') params.set('ward', filters.ward);
         if (filters.status) params.set('status', filters.status);
+        if (filters.category && filters.category !== 'all') params.set('category', filters.category);
         if (filters.search) params.set('search', filters.search);
         if (filters.starts_with) params.set('starts_with', filters.starts_with);
         params.set('layout', nextLayout);
         params.set('sort_dir', sortDir);
         return `/billing/reports/print?${params.toString()}`;
     };
+
+    const categoryFilterLabel = {
+        all: 'All Categories (OECB, Non-OECB & Procedure)',
+        oecb: 'OECB Only',
+        non_oecb: 'Non-OECB Only',
+        for_procedure: 'For Procedure Only',
+    }[filters.category] || 'All Categories';
 
     const statusLabel = {
         all_routed: 'All Routed (Excl. Cancelled)',
@@ -72,6 +83,7 @@ export default function PrintRoutedReport({
                     <th className="border border-slate-300 px-2 py-1.5">Patient Name ({sortDir === 'desc' ? 'Z–A' : 'A–Z'})</th>
                     <th className="border border-slate-300 px-2 py-1.5">Hospital #</th>
                     <th className="border border-slate-300 px-2 py-1.5">Ward</th>
+                    <th className="border border-slate-300 px-2 py-1.5">Classification</th>
                     <th className="border border-slate-300 px-2 py-1.5">Disposition</th>
                     <th className="border border-slate-300 px-2 py-1.5">Status</th>
                     <th className="border border-slate-300 px-2 py-1.5">Routed Date &amp; Time</th>
@@ -79,25 +91,32 @@ export default function PrintRoutedReport({
                 </tr>
             </thead>
             <tbody>
-                {rows.map((row, idx) => (
-                    <tr key={row.id || row.enccode} className="break-inside-avoid">
-                        <td className="border border-slate-300 px-2 py-1 text-center font-mono tabular-nums">{idx + 1}</td>
-                        <td className="border border-slate-300 px-2 py-1 font-bold text-slate-900">{row.patient_name}</td>
-                        <td className="border border-slate-300 px-2 py-1 font-mono tabular-nums">{row.hospital_number}</td>
-                        <td className="border border-slate-300 px-2 py-1">
-                            {row.room_ward}
-                            {(row.is_oecb || row.has_oxygen) && (
-                                <span className="ml-1 text-[11px] font-bold text-slate-700">
-                                    ({[row.is_oecb ? 'OECB' : null, row.has_oxygen ? 'O2' : null].filter(Boolean).join(', ')})
-                                </span>
-                            )}
-                        </td>
-                        <td className="border border-slate-300 px-2 py-1 font-semibold">{row.disposition}</td>
-                        <td className="border border-slate-300 px-2 py-1">{row.overall_status}</td>
-                        <td className="border border-slate-300 px-2 py-1 tabular-nums whitespace-nowrap">{row.created_at_formatted}</td>
-                        <td className="border border-slate-300 px-2 py-1">{row.encoded_by}</td>
-                    </tr>
-                ))}
+                {rows.map((row, idx) => {
+                    const classification = row.classification || (row.is_oecb ? 'OECB' : row.is_for_procedure ? 'For Procedure' : 'Non-OECB');
+                    return (
+                        <tr key={row.id || row.enccode} className="break-inside-avoid">
+                            <td className="border border-slate-300 px-2 py-1 text-center font-mono tabular-nums">{idx + 1}</td>
+                            <td className="border border-slate-300 px-2 py-1 font-bold text-slate-900">{row.patient_name}</td>
+                            <td className="border border-slate-300 px-2 py-1 font-mono tabular-nums">{row.hospital_number}</td>
+                            <td className="border border-slate-300 px-2 py-1">
+                                {row.room_ward}
+                                {row.has_oxygen && (
+                                    <span className="ml-1 text-[11px] font-bold text-slate-700">(O2)</span>
+                                )}
+                            </td>
+                            <td className="border border-slate-300 px-2 py-1 font-semibold">
+                                <span>{classification}</span>
+                                {row.is_for_procedure && row.procedure_type && (
+                                    <span className="block text-[10px] font-normal text-slate-700">{row.procedure_type}</span>
+                                )}
+                            </td>
+                            <td className="border border-slate-300 px-2 py-1 font-semibold">{row.disposition}</td>
+                            <td className="border border-slate-300 px-2 py-1">{row.overall_status}</td>
+                            <td className="border border-slate-300 px-2 py-1 tabular-nums whitespace-nowrap">{row.created_at_formatted}</td>
+                            <td className="border border-slate-300 px-2 py-1">{row.encoded_by}</td>
+                        </tr>
+                    );
+                })}
             </tbody>
         </table>
     );
@@ -129,10 +148,34 @@ export default function PrintRoutedReport({
                         Back to Portal
                     </Link>
                     <Link
-                        href={buildSwitchLayoutUrl(layout === 'alphabetical' ? 'by_disposition' : 'alphabetical')}
-                        className="px-3 py-1.5 rounded-lg border border-slate-300 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                        href={buildSwitchLayoutUrl('alphabetical')}
+                        className={`px-3 py-1.5 rounded-lg border text-xs font-bold ${
+                            layout === 'alphabetical'
+                                ? 'bg-slate-900 text-white border-slate-900'
+                                : 'border-slate-300 text-slate-700 hover:bg-slate-50'
+                        }`}
                     >
-                        Switch to: {layout === 'alphabetical' ? 'Grouped by Disposition' : 'Alphabetical Masterlist'}
+                        Alphabetical Masterlist
+                    </Link>
+                    <Link
+                        href={buildSwitchLayoutUrl('by_disposition')}
+                        className={`px-3 py-1.5 rounded-lg border text-xs font-bold ${
+                            layout === 'by_disposition'
+                                ? 'bg-slate-900 text-white border-slate-900'
+                                : 'border-slate-300 text-slate-700 hover:bg-slate-50'
+                        }`}
+                    >
+                        Grouped by Disposition
+                    </Link>
+                    <Link
+                        href={buildSwitchLayoutUrl('by_category')}
+                        className={`px-3 py-1.5 rounded-lg border text-xs font-bold ${
+                            layout === 'by_category'
+                                ? 'bg-slate-900 text-white border-slate-900'
+                                : 'border-slate-300 text-slate-700 hover:bg-slate-50'
+                        }`}
+                    >
+                        Grouped by OECB / Procedure
                     </Link>
                 </div>
 
@@ -214,13 +257,21 @@ export default function PrintRoutedReport({
                         <span className="font-semibold text-slate-900">{statusLabel}</span>
                     </div>
                     <div>
+                        <span className="font-bold text-slate-600 uppercase">Classification: </span>
+                        <span className="font-semibold text-slate-900">{categoryFilterLabel}</span>
+                    </div>
+                    <div>
                         <span className="font-bold text-slate-600 uppercase">Report Layout: </span>
                         <span className="font-semibold text-slate-900">
-                            {layout === 'by_disposition' ? 'Grouped by Disposition (A–Z)' : `Alphabetical (${sortDir === 'desc' ? 'Z–A' : 'A–Z'})`}
+                            {layout === 'by_disposition'
+                                ? 'Grouped by Disposition (A–Z)'
+                                : layout === 'by_category'
+                                    ? 'Grouped by OECB / Non-OECB / For Procedure'
+                                    : `Alphabetical (${sortDir === 'desc' ? 'Z–A' : 'A–Z'})`}
                             {filters.starts_with ? ` • Starts with "${filters.starts_with}"` : ''}
                         </span>
                     </div>
-                    <div className="sm:col-span-2">
+                    <div>
                         <span className="font-bold text-slate-600 uppercase">Generated: </span>
                         <span className="font-semibold text-slate-900">{generatedAt}</span>
                     </div>
@@ -230,35 +281,70 @@ export default function PrintRoutedReport({
                     </div>
                 </div>
 
-                {/* Disposition Breakdown Summary */}
-                {dispositionSummary.length > 0 && (
-                    <div className="mb-5">
-                        <h2 className="text-xs font-extrabold uppercase tracking-wider text-slate-800 mb-1.5">
-                            Summary by Type of Disposition
-                        </h2>
-                        <table className="w-full border-collapse text-left text-[11px]">
-                            <thead>
-                                <tr className="bg-slate-100 border border-slate-400 font-bold uppercase text-slate-800">
-                                    <th className="border border-slate-300 px-3 py-1.5">Type of Disposition</th>
-                                    <th className="border border-slate-300 px-3 py-1.5 text-right w-32">Patient Count</th>
-                                    <th className="border border-slate-300 px-3 py-1.5 text-right w-32">% Share</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {dispositionSummary.map((item) => (
-                                    <tr key={item.disposition}>
-                                        <td className="border border-slate-300 px-3 py-1 font-semibold">{item.disposition}</td>
-                                        <td className="border border-slate-300 px-3 py-1 text-right font-mono font-bold">{item.count.toLocaleString()}</td>
-                                        <td className="border border-slate-300 px-3 py-1 text-right font-mono">{item.percentage}%</td>
-                                    </tr>
-                                ))}
-                                <tr className="bg-slate-50 font-extrabold">
-                                    <td className="border border-slate-300 px-3 py-1.5">Total Routed Patients</td>
-                                    <td className="border border-slate-300 px-3 py-1.5 text-right font-mono">{total.toLocaleString()}</td>
-                                    <td className="border border-slate-300 px-3 py-1.5 text-right font-mono">100%</td>
-                                </tr>
-                            </tbody>
-                        </table>
+                {/* Classification & Disposition Breakdown Summaries */}
+                {(categorySummary.length > 0 || dispositionSummary.length > 0) && (
+                    <div className="mb-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {categorySummary.length > 0 && (
+                            <div>
+                                <h2 className="text-xs font-extrabold uppercase tracking-wider text-slate-800 mb-1.5">
+                                    Summary by OECB / Non-OECB / Procedure
+                                </h2>
+                                <table className="w-full border-collapse text-left text-[11px]">
+                                    <thead>
+                                        <tr className="bg-slate-100 border border-slate-400 font-bold uppercase text-slate-800">
+                                            <th className="border border-slate-300 px-3 py-1.5">Classification</th>
+                                            <th className="border border-slate-300 px-3 py-1.5 text-right w-24">Count</th>
+                                            <th className="border border-slate-300 px-3 py-1.5 text-right w-20">% Share</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {categorySummary.map((item) => (
+                                            <tr key={item.key}>
+                                                <td className="border border-slate-300 px-3 py-1 font-semibold">{item.label}</td>
+                                                <td className="border border-slate-300 px-3 py-1 text-right font-mono font-bold tabular-nums">{item.count.toLocaleString()}</td>
+                                                <td className="border border-slate-300 px-3 py-1 text-right font-mono tabular-nums">{item.percentage}%</td>
+                                            </tr>
+                                        ))}
+                                        <tr className="bg-slate-50 font-extrabold">
+                                            <td className="border border-slate-300 px-3 py-1.5">Total Routed Patients</td>
+                                            <td className="border border-slate-300 px-3 py-1.5 text-right font-mono tabular-nums">{total.toLocaleString()}</td>
+                                            <td className="border border-slate-300 px-3 py-1.5 text-right font-mono tabular-nums">100%</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+
+                        {dispositionSummary.length > 0 && (
+                            <div>
+                                <h2 className="text-xs font-extrabold uppercase tracking-wider text-slate-800 mb-1.5">
+                                    Summary by Type of Disposition
+                                </h2>
+                                <table className="w-full border-collapse text-left text-[11px]">
+                                    <thead>
+                                        <tr className="bg-slate-100 border border-slate-400 font-bold uppercase text-slate-800">
+                                            <th className="border border-slate-300 px-3 py-1.5">Type of Disposition</th>
+                                            <th className="border border-slate-300 px-3 py-1.5 text-right w-24">Count</th>
+                                            <th className="border border-slate-300 px-3 py-1.5 text-right w-20">% Share</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {dispositionSummary.map((item) => (
+                                            <tr key={item.disposition}>
+                                                <td className="border border-slate-300 px-3 py-1 font-semibold">{item.disposition}</td>
+                                                <td className="border border-slate-300 px-3 py-1 text-right font-mono font-bold tabular-nums">{item.count.toLocaleString()}</td>
+                                                <td className="border border-slate-300 px-3 py-1 text-right font-mono tabular-nums">{item.percentage}%</td>
+                                            </tr>
+                                        ))}
+                                        <tr className="bg-slate-50 font-extrabold">
+                                            <td className="border border-slate-300 px-3 py-1.5">Total Routed Patients</td>
+                                            <td className="border border-slate-300 px-3 py-1.5 text-right font-mono tabular-nums">{total.toLocaleString()}</td>
+                                            <td className="border border-slate-300 px-3 py-1.5 text-right font-mono tabular-nums">100%</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
                     </div>
                 )}
 
@@ -267,13 +353,15 @@ export default function PrintRoutedReport({
                     <div className="border border-slate-300 p-8 text-center text-xs text-slate-600">
                         No routed patient records match the selected filters.
                     </div>
-                ) : layout === 'by_disposition' ? (
+                ) : (layout === 'by_disposition' || layout === 'by_category') ? (
                     <div className="space-y-5">
                         {groupedSections.map((group) => (
-                            <section key={group.disposition}>
+                            <section key={group.key}>
                                 <div className="bg-slate-800 text-white px-3 py-1.5 text-xs font-extrabold uppercase tracking-wider flex justify-between items-center">
-                                    <span>Disposition: {group.disposition}</span>
-                                    <span className="font-mono">{group.items.length.toLocaleString()} patients</span>
+                                    <span>
+                                        {layout === 'by_category' ? `Classification: ${group.title}` : `Disposition: ${group.title}`}
+                                    </span>
+                                    <span className="font-mono tabular-nums">{group.items.length.toLocaleString()} patients</span>
                                 </div>
                                 {renderTable(group.items)}
                             </section>

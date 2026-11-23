@@ -4,7 +4,7 @@ import PortalLayout from '@/Layouts/PortalLayout';
 import Modal from '@/Components/Modal';
 import ConfirmDialog from '@/Components/ConfirmDialog';
 import axios from 'axios';
-import { getRequiredDepartments, isDepartmentCleared, supportsAdditionalClearance } from '@/utils/clearanceRouting';
+import { getRequiredDepartments, isDepartmentCleared, findDepartmentRemark, supportsAdditionalClearance } from '@/utils/clearanceRouting';
 
 export default function Ward({
     searchQuery,
@@ -32,6 +32,12 @@ export default function Ward({
     const [nicuInspectModal, setNicuInspectModal] = useState({ open: false, patient: null, orders: [], loading: false });
     const [nicuClearTarget, setNicuClearTarget] = useState(null);
     const [isClearingNicu, setIsClearingNicu] = useState(false);
+    const [nicuRemarkTarget, setNicuRemarkTarget] = useState(null);
+    const [nicuRemarkText, setNicuRemarkText] = useState('');
+    const [isSavingNicuRemark, setIsSavingNicuRemark] = useState(false);
+    const [rerouteTarget, setRerouteTarget] = useState(null);
+    const [rerouteReason, setRerouteReason] = useState('');
+    const [isRerouting, setIsRerouting] = useState(false);
 
     const previousClearedCount = useRef(clearedQueue.length);
     const cardRefs = useRef({});
@@ -44,7 +50,10 @@ export default function Ward({
         patient_name: patient?.name || '',
         arrival_datetime: patient?.arrival_datetime || '',
         disposition: patient?.disposition || '',
+        diagnosis: patient?.diagnosis || '',
         is_oecb: '', // Blank by default to force a Yes/No choice
+        is_for_procedure: '',
+        procedure_type: '',
         has_oxygen: '', 
         oxygen_remarks: '',
         requires_or: false,
@@ -111,7 +120,10 @@ export default function Ward({
                     patient_name: patient.name,
                     arrival_datetime: patient.arrival_datetime || '',
                     disposition: patient.disposition || '',
+                    diagnosis: patient.diagnosis || '',
                     is_oecb: '',
+                    is_for_procedure: '',
+                    procedure_type: '',
                     has_oxygen: '',
                     oxygen_remarks: '',
                     requires_or: Boolean(patient.requires_or),
@@ -127,7 +139,10 @@ export default function Ward({
                     patient_name: '',
                     arrival_datetime: '',
                     disposition: '',
+                    diagnosis: '',
                     is_oecb: '',
+                    is_for_procedure: '',
+                    procedure_type: '',
                     has_oxygen: '',
                     oxygen_remarks: '',
                     requires_or: false,
@@ -165,8 +180,11 @@ export default function Ward({
             patient_name: form.patient_name,
             arrival_datetime: form.arrival_datetime,
             disposition: form.disposition,
+            diagnosis: showAdditionalClearance ? form.diagnosis : '',
             room_ward: wardName,
             is_oecb: form.is_oecb === 'Yes', // Converts "Yes" to true for the database
+            is_for_procedure: form.is_oecb === 'No' && form.is_for_procedure === 'Yes',
+            procedure_type: form.is_oecb === 'No' && form.is_for_procedure === 'Yes' ? form.procedure_type : '',
             has_oxygen: form.has_oxygen === 'Yes',
             oxygen_remarks: form.oxygen_remarks,
             requires_or: showAdditionalClearance && Boolean(form.requires_or),
@@ -181,7 +199,10 @@ export default function Ward({
                     patient_name: '',
                     arrival_datetime: '',
                     disposition: '',
+                    diagnosis: '',
                     is_oecb: '',
+                    is_for_procedure: '',
+                    procedure_type: '',
                     has_oxygen: '',
                     oxygen_remarks: '',
                     requires_or: false,
@@ -206,7 +227,8 @@ export default function Ward({
             (tx.patient_name || '').toLowerCase().includes(trimmedQueueSearch) ||
             (tx.hospital_number || '').toLowerCase().includes(trimmedQueueSearch) ||
             (tx.enccode || '').toLowerCase().includes(trimmedQueueSearch) ||
-            (tx.disposition || '').toLowerCase().includes(trimmedQueueSearch)
+            (tx.disposition || '').toLowerCase().includes(trimmedQueueSearch) ||
+            (tx.diagnosis || '').toLowerCase().includes(trimmedQueueSearch)
         )
         : displayQueue;
     const hasSearchedNoMatch = Boolean(
@@ -356,6 +378,24 @@ export default function Ward({
                             </select>
                         </div>
 
+                        {showAdditionalClearance && (
+                            <div>
+                                <label htmlFor="ward-diagnosis" className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">
+                                    Diagnosis <span className="text-rose-500">*</span>
+                                </label>
+                                <textarea
+                                    id="ward-diagnosis"
+                                    rows="2"
+                                    maxLength={1000}
+                                    value={form.diagnosis}
+                                    onChange={e => setForm({...form, diagnosis: e.target.value})}
+                                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 resize-y"
+                                    placeholder="Encode primary / admitting diagnosis..."
+                                    required
+                                />
+                            </div>
+                        )}
+
                         {/* REQUIRED YES/NO RADIO BUTTONS FOR ER */}
                         {wardName === 'Emergency Room' && (
                             <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 space-y-4 mt-4">
@@ -370,7 +410,7 @@ export default function Ward({
                                                 name="is_oecb" 
                                                 value="Yes" 
                                                 checked={form.is_oecb === 'Yes'} 
-                                                onChange={e => setForm({...form, is_oecb: e.target.value})} 
+                                                onChange={e => setForm({...form, is_oecb: e.target.value, is_for_procedure: '', procedure_type: ''})} 
                                                 className="w-4 h-4 text-teal-600 focus:ring-teal-500 border-slate-300" 
                                                 required 
                                             />
@@ -390,6 +430,60 @@ export default function Ward({
                                         </label>
                                     </div>
                                 </div>
+
+                                {form.is_oecb === 'No' && (
+                                    <div className="pt-3 border-t border-slate-200 space-y-3">
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">
+                                                Is this for Procedure? <span className="text-rose-500 text-sm">*</span>
+                                            </label>
+                                            <div className="flex gap-6">
+                                                <label className="flex items-center space-x-2 cursor-pointer">
+                                                    <input
+                                                        type="radio"
+                                                        name="is_for_procedure"
+                                                        value="Yes"
+                                                        checked={form.is_for_procedure === 'Yes'}
+                                                        onChange={e => setForm({ ...form, is_for_procedure: e.target.value })}
+                                                        className="w-4 h-4 text-teal-600 focus:ring-teal-500 border-slate-300"
+                                                        required
+                                                    />
+                                                    <span className="text-sm font-bold text-slate-700 uppercase">Yes</span>
+                                                </label>
+                                                <label className="flex items-center space-x-2 cursor-pointer">
+                                                    <input
+                                                        type="radio"
+                                                        name="is_for_procedure"
+                                                        value="No"
+                                                        checked={form.is_for_procedure === 'No'}
+                                                        onChange={e => setForm({ ...form, is_for_procedure: e.target.value, procedure_type: '' })}
+                                                        className="w-4 h-4 text-teal-600 focus:ring-teal-500 border-slate-300"
+                                                        required
+                                                    />
+                                                    <span className="text-sm font-bold text-slate-700 uppercase">No</span>
+                                                </label>
+                                            </div>
+                                        </div>
+
+                                        {form.is_for_procedure === 'Yes' && (
+                                            <div>
+                                                <label htmlFor="er-procedure-type" className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">
+                                                    Type of Procedure <span className="text-rose-500">*</span>
+                                                </label>
+                                                <input
+                                                    id="er-procedure-type"
+                                                    type="text"
+                                                    maxLength={255}
+                                                    value={form.procedure_type}
+                                                    onChange={e => setForm({ ...form, procedure_type: e.target.value })}
+                                                    placeholder="e.g. Suturing, I&D, Cast Application..."
+                                                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+                                                    required
+                                                />
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                                 
                                 <div className="pt-3 border-t border-slate-200">
                                     <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">
@@ -542,6 +636,23 @@ export default function Ward({
                                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
                                             <span>Print F07</span>
                                         </a>
+                                        {showAdditionalClearance && patient?.can_reroute && (
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setRerouteTarget({
+                                                        enccode: patient.enccode,
+                                                        patient_name: patient.name,
+                                                        hospital_number: form.hospital_number || patient.hpercode,
+                                                    });
+                                                    setRerouteReason('');
+                                                }}
+                                                className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-2.5 px-3 rounded-lg shadow-sm transition-colors flex items-center justify-center space-x-2 text-xs"
+                                            >
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                                                <span>Re-Route Clearance</span>
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
                             ) : (
@@ -661,8 +772,29 @@ export default function Ward({
                                                                 Disposition: <span className="font-semibold text-slate-700">{item.disposition || 'N/A'}</span>
                                                                 {' · '}Routed {new Date(item.date).toLocaleString()}
                                                             </p>
+                                                            {item.diagnosis && (
+                                                                <p className="text-xs text-slate-600 mt-1">
+                                                                    Diagnosis: <span className="font-semibold text-slate-800">{item.diagnosis}</span>
+                                                                </p>
+                                                            )}
+                                                            {item.pending_remark?.remarks && (
+                                                                <div className="mt-2 inline-flex items-start gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900">
+                                                                    <span className="font-bold shrink-0">Pending Reason:</span>
+                                                                    <span>{item.pending_remark.remarks}</span>
+                                                                </div>
+                                                            )}
                                                         </div>
-                                                        <div className="flex items-center gap-2 shrink-0">
+                                                        <div className="flex flex-wrap items-center gap-2 shrink-0">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    setNicuRemarkTarget(item);
+                                                                    setNicuRemarkText(item.pending_remark?.remarks || '');
+                                                                }}
+                                                                className="px-3 py-2 text-xs font-bold bg-amber-50 border border-amber-300 text-amber-900 hover:bg-amber-100 rounded-lg transition-colors"
+                                                            >
+                                                                {item.pending_remark?.remarks ? 'Edit Remark' : 'Add Remark'}
+                                                            </button>
                                                             <button
                                                                 type="button"
                                                                 onClick={() => openNicuInspect(item)}
@@ -755,23 +887,62 @@ export default function Ward({
                                                     {tx.is_oecb && (
                                                         <span className="bg-amber-100 text-amber-800 text-[11px] font-bold px-2 py-0.5 rounded border border-amber-300">OECB</span>
                                                     )}
+                                                    {!tx.is_oecb && tx.is_for_procedure && (
+                                                        <span className="bg-indigo-100 text-indigo-800 text-[11px] font-bold px-2 py-0.5 rounded border border-indigo-300">Procedure</span>
+                                                    )}
                                                     {tx.requires_or && (
                                                         <span className="bg-teal-100 text-teal-800 text-[11px] font-bold px-2 py-0.5 rounded border border-teal-300">+ OR</span>
                                                     )}
                                                     {tx.requires_nicu && (
                                                         <span className="bg-sky-100 text-sky-800 text-[11px] font-bold px-2 py-0.5 rounded border border-sky-300">Baby · NICU</span>
                                                     )}
+                                                    {Number(tx.reroute_count) > 0 && (
+                                                        <span className="bg-amber-100 text-amber-900 text-[11px] font-bold px-2 py-0.5 rounded border border-amber-300">
+                                                            Re-routed{Number(tx.reroute_count) > 1 ? ` ×${tx.reroute_count}` : ''}
+                                                        </span>
+                                                    )}
                                                     <span className="text-xs text-slate-400 font-mono border border-slate-200 px-2 py-0.5 rounded bg-slate-50">{tx.hospital_number}</span>
                                                 </h4>
                                                 <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mt-1">Disposition: {tx.disposition}</p>
+                                                {!tx.is_oecb && tx.is_for_procedure && tx.procedure_type && (
+                                                    <p className="text-xs text-indigo-900 mt-1">
+                                                        <span className="font-bold text-indigo-700 uppercase tracking-wide">Procedure:</span>{' '}
+                                                        <span className="font-semibold">{tx.procedure_type}</span>
+                                                    </p>
+                                                )}
+                                                {tx.diagnosis && (
+                                                    <p className="text-xs text-slate-700 mt-1">
+                                                        <span className="font-bold text-slate-500 uppercase tracking-wide">Diagnosis:</span>{' '}
+                                                        <span className="font-semibold text-slate-800">{tx.diagnosis}</span>
+                                                    </p>
+                                                )}
+                                                {Number(tx.reroute_count) > 0 && tx.reroute_reason && (
+                                                    <p className="text-xs text-amber-900 mt-1">
+                                                        <span className="font-bold uppercase tracking-wide">Re-route Reason:</span>{' '}
+                                                        <span className="font-medium">{tx.reroute_reason}</span>
+                                                    </p>
+                                                )}
                                             </div>
                                             <div className="text-right">
                                                 {tx.overall_status === 'Cleared' || tx.overall_status === 'Archived' ? (
-                                                    <div className="flex items-center gap-3">
+                                                    <div className="flex flex-wrap items-center justify-end gap-2">
                                                         <span className="inline-flex items-center px-3 py-1.5 rounded-md text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
                                                             <svg className="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
                                                             Fully Cleared
                                                         </span>
+                                                        {showAdditionalClearance && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    setRerouteTarget(tx);
+                                                                    setRerouteReason('');
+                                                                }}
+                                                                className="inline-flex items-center px-3 py-1.5 rounded-md text-xs font-bold bg-amber-600 text-white hover:bg-amber-700 transition-colors shadow-sm"
+                                                            >
+                                                                <svg className="w-3.5 h-3.5 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                                                                Re-Route Clearance
+                                                            </button>
+                                                        )}
                                                         <a href={`/print-clearance/document?enccode=${encodeURIComponent(tx.enccode)}`} target="_blank" rel="noreferrer" className="inline-flex items-center px-3 py-1.5 rounded-md text-xs font-bold bg-teal-600 text-white hover:bg-teal-700 transition-colors shadow-sm">
                                                             <svg className="w-3.5 h-3.5 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
                                                             Print F07
@@ -789,10 +960,15 @@ export default function Ward({
                                         <div className={`grid grid-cols-2 ${gridColsClass} gap-2`}>
                                             {requiredDepts.map((dept, i) => {
                                                 const isApproved = isDepartmentCleared(tx.cleared_departments, dept);
+                                                const deptRemark = !isApproved ? findDepartmentRemark(tx.pending_remarks, dept) : null;
                                                 
                                                 return (
-                                                    <div key={i} className={`border rounded-lg p-2.5 text-center cursor-default transition-all duration-500 ${isApproved ? 'bg-emerald-50 border-emerald-300 shadow-sm' : 'bg-slate-50 border-slate-200'}`}>
-                                                        <div className={`text-[11px] font-black uppercase mb-1 truncate transition-colors ${isApproved ? 'text-emerald-700' : 'text-slate-500'}`}>
+                                                    <div
+                                                        key={i}
+                                                        title={deptRemark ? `${dept}: ${deptRemark.remarks}` : undefined}
+                                                        className={`border rounded-lg p-2.5 text-center cursor-default transition-all duration-500 ${isApproved ? 'bg-emerald-50 border-emerald-300 shadow-sm' : (deptRemark ? 'bg-amber-50 border-amber-300' : 'bg-slate-50 border-slate-200')}`}
+                                                    >
+                                                        <div className={`text-[11px] font-black uppercase mb-1 truncate transition-colors ${isApproved ? 'text-emerald-700' : (deptRemark ? 'text-amber-900' : 'text-slate-500')}`}>
                                                             {dept}
                                                         </div>
                                                         
@@ -802,15 +978,55 @@ export default function Ward({
                                                                 <span>Cleared</span>
                                                             </span>
                                                         ) : (
-                                                            <span className="text-amber-500 text-xs font-bold flex items-center justify-center space-x-1">
-                                                                <svg className="w-3 h-3 animate-pulse motion-reduce:animate-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                                                                <span>Pending</span>
-                                                            </span>
+                                                            <div className="space-y-1">
+                                                                <span className="text-amber-600 text-xs font-bold flex items-center justify-center space-x-1">
+                                                                    <svg className="w-3 h-3 animate-pulse motion-reduce:animate-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                                                    <span>Pending</span>
+                                                                </span>
+                                                                {deptRemark && (
+                                                                    <p className="text-[10px] font-semibold text-amber-900 bg-white/80 border border-amber-200 rounded px-1.5 py-0.5 line-clamp-2 leading-snug">
+                                                                        {deptRemark.remarks}
+                                                                    </p>
+                                                                )}
+                                                            </div>
                                                         )}
                                                     </div>
                                                 )
                                             })}
                                         </div>
+
+                                        {(() => {
+                                            const activeRemarks = requiredDepts
+                                                .filter((dept) => !isDepartmentCleared(tx.cleared_departments, dept))
+                                                .map((dept) => {
+                                                    const found = findDepartmentRemark(tx.pending_remarks, dept);
+                                                    return found ? { dept, ...found } : null;
+                                                })
+                                                .filter(Boolean);
+
+                                            if (activeRemarks.length === 0) return null;
+
+                                            return (
+                                                <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2.5 space-y-1.5">
+                                                    <div className="text-[11px] font-bold uppercase tracking-wider text-amber-900">
+                                                        Pending Cost Center Remarks
+                                                    </div>
+                                                    <div className="space-y-1">
+                                                        {activeRemarks.map((rem) => (
+                                                            <div key={rem.dept} className="text-xs text-amber-950 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                                                                <span className="font-bold text-amber-900">{rem.dept}:</span>
+                                                                <span className="font-medium">{rem.remarks}</span>
+                                                                {rem.updated_by && (
+                                                                    <span className="text-[11px] text-amber-800/80">
+                                                                        ({rem.updated_by}{rem.updated_at ? ` · ${new Date(rem.updated_at).toLocaleTimeString('en-US', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit' })}` : ''})
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })()}
                                     </div>
                                 )
                             })
@@ -941,6 +1157,203 @@ export default function Ward({
                 tone="teal"
                 loading={isClearingNicu}
             />
+
+            <Modal
+                show={Boolean(nicuRemarkTarget)}
+                onClose={() => { if (!isSavingNicuRemark) setNicuRemarkTarget(null); }}
+                maxWidth="md"
+                zIndexClass="z-[400]"
+            >
+                <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+                    <div>
+                        <h3 className="text-base font-bold text-slate-800">NICU Pending Remark</h3>
+                        <p className="text-xs text-slate-500 mt-0.5">{nicuRemarkTarget?.name}</p>
+                    </div>
+                    <button
+                        type="button"
+                        aria-label="Close modal"
+                        onClick={() => { if (!isSavingNicuRemark) setNicuRemarkTarget(null); }}
+                        className="text-slate-400 hover:text-slate-600 p-1 rounded-lg transition-colors"
+                    >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+                <form
+                    onSubmit={(e) => {
+                        e.preventDefault();
+                        if (!nicuRemarkTarget) return;
+                        setIsSavingNicuRemark(true);
+                        router.post('/clearance/pending-remarks', {
+                            enccode: nicuRemarkTarget.enccode,
+                            department: 'NICU',
+                            remarks: nicuRemarkText,
+                        }, {
+                            preserveScroll: true,
+                            onSuccess: () => {
+                                setIsSavingNicuRemark(false);
+                                setNicuRemarkTarget(null);
+                                setToastMessage('NICU pending remark updated.');
+                                setTimeout(() => setToastMessage(null), 3000);
+                            },
+                            onError: () => {
+                                setIsSavingNicuRemark(false);
+                                setToastMessage('Failed to save NICU pending remark.');
+                                setTimeout(() => setToastMessage(null), 3500);
+                            },
+                        });
+                    }}
+                    className="p-6 space-y-4"
+                >
+                    <div>
+                        <label htmlFor="nicu-pending-remark" className="block text-xs font-bold text-slate-600 uppercase tracking-wide mb-1.5">
+                            Reason why NICU clearance is pending
+                        </label>
+                        <textarea
+                            id="nicu-pending-remark"
+                            rows="3"
+                            maxLength={500}
+                            value={nicuRemarkText}
+                            onChange={(e) => setNicuRemarkText(e.target.value)}
+                            placeholder="Leave blank to clear existing remark..."
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 resize-y"
+                            autoFocus
+                        />
+                    </div>
+                    <div className="flex justify-end gap-2.5">
+                        <button
+                            type="button"
+                            disabled={isSavingNicuRemark}
+                            onClick={() => setNicuRemarkTarget(null)}
+                            className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-lg border border-slate-200"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="submit"
+                            disabled={isSavingNicuRemark}
+                            className="px-4 py-2 text-xs font-bold bg-teal-600 hover:bg-teal-700 text-white rounded-lg shadow-sm disabled:opacity-50"
+                        >
+                            {isSavingNicuRemark ? 'Saving...' : 'Save Remark'}
+                        </button>
+                    </div>
+                </form>
+            </Modal>
+
+            <Modal
+                show={Boolean(rerouteTarget)}
+                onClose={() => { if (!isRerouting) setRerouteTarget(null); }}
+                closeable={!isRerouting}
+                maxWidth="md"
+                zIndexClass="z-[400]"
+            >
+                <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+                    <div>
+                        <h3 className="text-base font-bold text-slate-800">Re-Route Patient Clearance</h3>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                            {rerouteTarget?.patient_name}
+                            {rerouteTarget?.hospital_number ? ` · ${rerouteTarget.hospital_number}` : ''}
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        aria-label="Close modal"
+                        onClick={() => { if (!isRerouting) setRerouteTarget(null); }}
+                        className="text-slate-400 hover:text-slate-600 p-1 rounded-lg transition-colors"
+                    >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+                <form
+                    onSubmit={(e) => {
+                        e.preventDefault();
+                        if (!rerouteTarget) return;
+                        const targetEnccode = rerouteTarget.enccode;
+                        setIsRerouting(true);
+                        router.post('/clearance/reroute', {
+                            enccode: targetEnccode,
+                            reason: rerouteReason,
+                        }, {
+                            preserveScroll: true,
+                            onSuccess: () => {
+                                setIsRerouting(false);
+                                setRerouteTarget(null);
+                                setRerouteReason('');
+                                setActiveTab('active');
+                                setHighlightedEnccode(targetEnccode);
+                                setToastMessage('Patient re-routed! All cost centers are pending verification again.');
+                                setTimeout(() => setToastMessage(null), 4000);
+                            },
+                            onError: (errors) => {
+                                const msg = Object.values(errors || {}).flat().find(Boolean);
+                                setIsRerouting(false);
+                                setToastMessage(msg || 'Failed to re-route clearance. Please try again.');
+                                setTimeout(() => setToastMessage(null), 4000);
+                            },
+                        });
+                    }}
+                    className="p-6 space-y-4"
+                >
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950 leading-relaxed">
+                        Previously cleared departments for this encounter will be reset to <strong>Pending</strong> so every cost center can re-verify any new charges before discharge.
+                    </div>
+
+                    <div>
+                        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-2">Common Reasons</div>
+                        <div className="flex flex-wrap gap-1.5">
+                            {[
+                                'Additional charges incurred',
+                                'Discharge deferred / stayed overnight',
+                                'New medication or procedure ordered',
+                                'Updated billing / credit verification',
+                            ].map((preset) => (
+                                <button
+                                    key={preset}
+                                    type="button"
+                                    onClick={() => setRerouteReason(preset)}
+                                    className="px-2.5 py-1 rounded-md border border-slate-300 bg-slate-50 hover:bg-amber-50 hover:border-amber-300 text-[11px] font-semibold text-slate-700 transition-colors"
+                                >
+                                    {preset}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div>
+                        <label htmlFor="reroute-reason-input" className="block text-xs font-bold text-slate-600 uppercase tracking-wide mb-1.5">
+                            Reason for Re-Routing
+                        </label>
+                        <textarea
+                            id="reroute-reason-input"
+                            rows="3"
+                            maxLength={500}
+                            value={rerouteReason}
+                            onChange={(e) => setRerouteReason(e.target.value)}
+                            placeholder="Explain why this clearance needs to be re-routed..."
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 resize-y"
+                            required
+                            autoFocus
+                        />
+                    </div>
+
+                    <div className="flex justify-end gap-2.5 pt-2 border-t border-slate-100">
+                        <button
+                            type="button"
+                            disabled={isRerouting}
+                            onClick={() => setRerouteTarget(null)}
+                            className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-lg border border-slate-200 disabled:opacity-50"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="submit"
+                            disabled={isRerouting}
+                            className="px-4 py-2 text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white rounded-lg shadow-sm disabled:opacity-50 transition-colors"
+                        >
+                            {isRerouting ? 'Re-Routing...' : 'Confirm Re-Route'}
+                        </button>
+                    </div>
+                </form>
+            </Modal>
 
             {toastMessage && (
                 <div className="fixed top-6 right-6 z-[200] flex items-center bg-teal-600 text-white px-5 py-3.5 rounded-xl shadow-2xl animate-slide-in-top motion-reduce:animate-none">

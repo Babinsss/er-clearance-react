@@ -3,9 +3,11 @@
 namespace App\Http\Controllers;
 
 use App\Models\ClearanceLog;
+use App\Models\ClearancePendingRemark;
 use App\Models\ClearanceTransaction;
 use App\Models\Department;
 use App\Models\User;
+use App\Services\DepartmentOperatingHours;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Illuminate\Support\Facades\Auth;
@@ -67,33 +69,59 @@ class BillingController extends Controller
     }
 
     /**
+     * Check whether a logged/stored department string matches a canonical cost center name.
+     */
+    public static function departmentsMatch(string $requiredDept, string $candidateDept): bool
+    {
+        $reqUpper = strtoupper(trim($requiredDept));
+        $candidate = strtoupper(trim($candidateDept));
+
+        if ($candidate === $reqUpper) {
+            return true;
+        }
+        if ($reqUpper === 'CREDIT AND COLLECTION' && (str_contains($candidate, 'CREDIT') || str_contains($candidate, 'COLLECT'))) {
+            return true;
+        }
+        if ($reqUpper === 'OR' && ($candidate === 'OR/LR/DR' || $candidate === 'OPERATING ROOM')) {
+            return true;
+        }
+        if ($reqUpper === 'LR/DR' && ($candidate === 'OR/LR/DR' || $candidate === 'LR / DR' || $candidate === 'LR' || $candidate === 'DR' || $candidate === 'DELIVERY ROOM')) {
+            return true;
+        }
+        if ($reqUpper === 'HDU' && ($candidate === 'HDU' || $candidate === 'CKD' || $candidate === 'DIALYSIS' || $candidate === 'DIALYSIS UNIT' || $candidate === 'HEMODIALYSIS')) {
+            return true;
+        }
+        if ($reqUpper === 'CARDIO PULMO' && (str_contains($candidate, 'CARDIO') || str_contains($candidate, 'ECG'))) {
+            return true;
+        }
+        if ($reqUpper === 'NICU' && ($candidate === 'NICU' || $candidate === 'NICU WARD' || str_contains($candidate, 'NEONATAL'))) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
      * Match a canonical cost center name to a patient's clearance log.
      */
     public static function matchDepartmentLog(string $requiredDept, $patientLogs): ?ClearanceLog
     {
-        $reqUpper = strtoupper(trim($requiredDept));
         foreach ($patientLogs as $log) {
-            $cleared = strtoupper(trim($log->department));
-            if ($cleared === $reqUpper) {
+            if (self::departmentsMatch($requiredDept, (string) $log->department)) {
                 return $log;
             }
-            if ($reqUpper === 'CREDIT AND COLLECTION' && (str_contains($cleared, 'CREDIT') || str_contains($cleared, 'COLLECTION') || str_contains($cleared, 'COLLECT'))) {
-                return $log;
-            }
-            if ($reqUpper === 'OR' && ($cleared === 'OR/LR/DR' || $cleared === 'OPERATING ROOM')) {
-                return $log;
-            }
-            if ($reqUpper === 'LR/DR' && ($cleared === 'OR/LR/DR' || $cleared === 'LR / DR' || $cleared === 'LR' || $cleared === 'DR' || $cleared === 'DELIVERY ROOM')) {
-                return $log;
-            }
-            if ($reqUpper === 'HDU' && ($cleared === 'HDU' || $cleared === 'CKD' || $cleared === 'DIALYSIS' || $cleared === 'DIALYSIS UNIT' || $cleared === 'HEMODIALYSIS')) {
-                return $log;
-            }
-            if ($reqUpper === 'CARDIO PULMO' && (str_contains($cleared, 'CARDIO') || str_contains($cleared, 'ECG'))) {
-                return $log;
-            }
-            if ($reqUpper === 'NICU' && ($cleared === 'NICU' || $cleared === 'NICU WARD' || str_contains($cleared, 'NEONATAL'))) {
-                return $log;
+        }
+        return null;
+    }
+
+    /**
+     * Match a canonical cost center name to a patient's pending remark.
+     */
+    public static function matchDepartmentRemark(string $requiredDept, $patientRemarks): ?ClearancePendingRemark
+    {
+        foreach ($patientRemarks as $remark) {
+            if (self::departmentsMatch($requiredDept, (string) $remark->department)) {
+                return $remark;
             }
         }
         return null;
@@ -104,16 +132,10 @@ class BillingController extends Controller
      */
     public static function resolveCanonicalCostCenter(string $deptName): ?string
     {
-        $cleanD = strtoupper(trim($deptName));
         foreach (self::$costCenters as $cc) {
-            $cleanTarget = strtoupper(trim($cc));
-            if ($cleanD === $cleanTarget) return $cc;
-            if ($cleanTarget === 'CREDIT AND COLLECTION' && (str_contains($cleanD, 'CREDIT') || str_contains($cleanD, 'COLLECT'))) return $cc;
-            if ($cleanTarget === 'OR' && ($cleanD === 'OR/LR/DR' || $cleanD === 'OPERATING ROOM')) return $cc;
-            if ($cleanTarget === 'LR/DR' && ($cleanD === 'OR/LR/DR' || $cleanD === 'LR / DR' || $cleanD === 'LR' || $cleanD === 'DR' || $cleanD === 'DELIVERY ROOM')) return $cc;
-            if ($cleanTarget === 'HDU' && ($cleanD === 'HDU' || $cleanD === 'CKD' || $cleanD === 'DIALYSIS' || $cleanD === 'DIALYSIS UNIT' || $cleanD === 'HEMODIALYSIS')) return $cc;
-            if ($cleanTarget === 'CARDIO PULMO' && (str_contains($cleanD, 'CARDIO') || str_contains($cleanD, 'ECG'))) return $cc;
-            if ($cleanTarget === 'NICU' && ($cleanD === 'NICU' || $cleanD === 'NICU WARD' || str_contains($cleanD, 'NEONATAL'))) return $cc;
+            if (self::departmentsMatch($cc, $deptName)) {
+                return $cc;
+            }
         }
         return null;
     }
@@ -160,24 +182,41 @@ class BillingController extends Controller
             ->get()
             ->groupBy('enccode');
 
+        $routedRemarks = ClearancePendingRemark::whereIn('enccode', $routedEnccodes)
+            ->with('user:id,name')
+            ->orderBy('updated_at', 'desc')
+            ->get()
+            ->groupBy('enccode');
+
         $now = now();
-        $formattedRouted = $routedTransactions->map(function ($tx) use ($routedLogs, $now) {
+        $operatingHours = new DepartmentOperatingHours();
+        $deptSchedules = [];
+        foreach (self::$costCenters as $cc) {
+            $deptSchedules[$cc] = $operatingHours->getStatusAt($cc, $now);
+        }
+
+        $formattedRouted = $routedTransactions->map(function ($tx) use ($routedLogs, $routedRemarks, $now, $operatingHours, $deptSchedules) {
             $reqDepts = self::getRequiredDepartmentsForWard(
                 $tx->room_ward,
                 (bool) $tx->requires_or,
                 (bool) $tx->requires_nicu
             );
             $pLogs = $routedLogs->get($tx->enccode, collect());
+            $pRemarks = $routedRemarks->get($tx->enccode, collect());
 
             $stationDetails = [];
             $clearedCount = 0;
 
             foreach ($reqDepts as $deptName) {
                 $matchedLog = self::matchDepartmentLog($deptName, $pLogs);
+                $schedule = $deptSchedules[$deptName] ?? $operatingHours->getStatusAt($deptName, $now);
+
                 if ($matchedLog) {
                     $clearedCount++;
-                    $diffSec = max(0, $tx->created_at->diffInSeconds($matchedLog->created_at));
+                    $metrics = $operatingHours->calculateMetrics($deptName, $tx->created_at, $matchedLog->created_at);
+                    $diffSec = $metrics['effective_seconds'];
                     $diffMin = max(0, (int) round($diffSec / 60));
+                    $wallSec = $metrics['wall_seconds'];
 
                     $stationDetails[] = [
                         'department' => $deptName,
@@ -187,13 +226,25 @@ class BillingController extends Controller
                         'duration_seconds' => $diffSec,
                         'duration_minutes' => $diffMin,
                         'duration_formatted' => self::formatDuration($diffSec),
+                        'wall_duration_seconds' => $wallSec,
+                        'wall_duration_formatted' => self::formatDuration($wallSec),
+                        'off_hours_cleared' => $metrics['off_hours_cleared'],
+                        'is_24_7' => $schedule['is_24_7'],
+                        'is_department_open' => $schedule['is_open_now'],
+                        'hours_label' => $schedule['hours_label'],
+                        'next_open_label' => $schedule['next_open_label'],
                         'waiting_seconds' => null,
                         'waiting_minutes' => null,
                         'waiting_formatted' => null,
+                        'wall_waiting_seconds' => null,
+                        'wall_waiting_formatted' => null,
+                        'pending_remark' => null,
                     ];
                 } else {
-                    $waitingSec = max(0, $now->diffInSeconds($tx->created_at));
+                    $waitingSec = $operatingHours->calculateEffectiveSeconds($deptName, $tx->created_at, $now);
                     $waitingMin = max(0, (int) round($waitingSec / 60));
+                    $wallWaitingSec = max(0, $now->getTimestamp() - $tx->created_at->getTimestamp());
+                    $matchedRemark = self::matchDepartmentRemark($deptName, $pRemarks);
 
                     $stationDetails[] = [
                         'department' => $deptName,
@@ -203,14 +254,28 @@ class BillingController extends Controller
                         'duration_seconds' => null,
                         'duration_minutes' => null,
                         'duration_formatted' => null,
+                        'wall_duration_seconds' => null,
+                        'wall_duration_formatted' => null,
+                        'off_hours_cleared' => false,
+                        'is_24_7' => $schedule['is_24_7'],
+                        'is_department_open' => $schedule['is_open_now'],
+                        'hours_label' => $schedule['hours_label'],
+                        'next_open_label' => $schedule['next_open_label'],
                         'waiting_seconds' => $waitingSec,
                         'waiting_minutes' => $waitingMin,
                         'waiting_formatted' => self::formatDuration($waitingSec),
+                        'wall_waiting_seconds' => $wallWaitingSec,
+                        'wall_waiting_formatted' => self::formatDuration($wallWaitingSec),
+                        'pending_remark' => $matchedRemark ? [
+                            'remarks' => $matchedRemark->remarks,
+                            'updated_by' => $matchedRemark->user->name ?? 'Staff',
+                            'updated_at' => $matchedRemark->updated_at?->toIso8601String(),
+                        ] : null,
                     ];
                 }
             }
 
-            $elapsedSec = max(0, $now->diffInSeconds($tx->created_at));
+            $elapsedSec = max(0, $now->getTimestamp() - $tx->created_at->getTimestamp());
             $elapsedMin = max(0, (int) round($elapsedSec / 60));
 
             return [
@@ -221,8 +286,15 @@ class BillingController extends Controller
                 'room_ward' => $tx->room_ward,
                 'arrival_datetime' => $tx->arrival_datetime,
                 'disposition' => $tx->disposition,
+                'diagnosis' => $tx->diagnosis,
                 'overall_status' => $tx->overall_status,
+                'reroute_count' => (int) ($tx->reroute_count ?? 0),
+                'reroute_reason' => $tx->reroute_reason,
+                'rerouted_by' => $tx->rerouted_by,
+                'rerouted_at' => $tx->rerouted_at ? $tx->rerouted_at->toIso8601String() : null,
                 'is_oecb' => (bool) $tx->is_oecb,
+                'is_for_procedure' => (bool) $tx->is_for_procedure,
+                'procedure_type' => $tx->procedure_type,
                 'has_oxygen' => (bool) $tx->has_oxygen,
                 'oxygen_remarks' => $tx->oxygen_remarks,
                 'requires_or' => (bool) $tx->requires_or,
@@ -253,16 +325,19 @@ class BillingController extends Controller
             $rawStats[$cc] = [
                 'name' => $cc,
                 'total_cleared' => 0,
+                'measured_cleared' => 0,
+                'off_hours_cleared_count' => 0,
                 'total_seconds' => 0,
                 'min_seconds' => null,
                 'max_seconds' => 0,
                 'today_cleared' => 0,
+                'today_measured_cleared' => 0,
                 'today_seconds' => 0,
                 'recent_logs' => [],
             ];
         }
 
-        $todayStart = now()->startOfDay();
+        $todayStart = now('Asia/Manila')->startOfDay();
 
         foreach ($recentLogs as $log) {
             if (!$log->transaction) continue;
@@ -270,20 +345,32 @@ class BillingController extends Controller
             $canonical = self::resolveCanonicalCostCenter($log->department);
             if (!$canonical || !isset($rawStats[$canonical])) continue;
 
-            $sec = max(0, $log->transaction->created_at->diffInSeconds($log->created_at));
-            $rawStats[$canonical]['total_cleared']++;
-            $rawStats[$canonical]['total_seconds'] += $sec;
+            $metrics = $operatingHours->calculateMetrics($canonical, $log->transaction->created_at, $log->created_at);
+            $sec = $metrics['effective_seconds'];
+            $wallSec = $metrics['wall_seconds'];
+            $isOffHoursZero = $metrics['off_hours_cleared'] && $sec === 0;
 
-            if ($rawStats[$canonical]['min_seconds'] === null || $sec < $rawStats[$canonical]['min_seconds']) {
-                $rawStats[$canonical]['min_seconds'] = $sec;
-            }
-            if ($sec > $rawStats[$canonical]['max_seconds']) {
-                $rawStats[$canonical]['max_seconds'] = $sec;
+            $rawStats[$canonical]['total_cleared']++;
+            if ($isOffHoursZero) {
+                $rawStats[$canonical]['off_hours_cleared_count']++;
+            } else {
+                $rawStats[$canonical]['measured_cleared']++;
+                $rawStats[$canonical]['total_seconds'] += $sec;
+
+                if ($rawStats[$canonical]['min_seconds'] === null || $sec < $rawStats[$canonical]['min_seconds']) {
+                    $rawStats[$canonical]['min_seconds'] = $sec;
+                }
+                if ($sec > $rawStats[$canonical]['max_seconds']) {
+                    $rawStats[$canonical]['max_seconds'] = $sec;
+                }
             }
 
             if ($log->created_at >= $todayStart) {
                 $rawStats[$canonical]['today_cleared']++;
-                $rawStats[$canonical]['today_seconds'] += $sec;
+                if (!$isOffHoursZero) {
+                    $rawStats[$canonical]['today_measured_cleared']++;
+                    $rawStats[$canonical]['today_seconds'] += $sec;
+                }
             }
 
             if (count($rawStats[$canonical]['recent_logs']) < 8) {
@@ -296,6 +383,8 @@ class BillingController extends Controller
                     'cleared_by' => $log->user->name ?? 'Staff',
                     'duration_formatted' => self::formatDuration($sec),
                     'duration_minutes' => (int) round($sec / 60),
+                    'wall_duration_formatted' => self::formatDuration($wallSec),
+                    'off_hours_cleared' => $metrics['off_hours_cleared'],
                 ];
             }
         }
@@ -303,22 +392,24 @@ class BillingController extends Controller
         $costCenterStats = [];
         $totalMinutesAll = 0;
         $totalClearedAll = 0;
+        $totalMeasuredAll = 0;
         $fastestDept = null;
         $slowestDept = null;
         $minAvg = 999999;
         $maxAvg = -1;
 
         foreach ($rawStats as $name => $d) {
-            $avgSec = $d['total_cleared'] > 0 ? (int) round($d['total_seconds'] / $d['total_cleared']) : 0;
+            $avgSec = $d['measured_cleared'] > 0 ? (int) round($d['total_seconds'] / $d['measured_cleared']) : 0;
             $avgMin = (int) round($avgSec / 60);
 
-            $todayAvgSec = $d['today_cleared'] > 0 ? (int) round($d['today_seconds'] / $d['today_cleared']) : 0;
+            $todayAvgSec = $d['today_measured_cleared'] > 0 ? (int) round($d['today_seconds'] / $d['today_measured_cleared']) : 0;
             $todayAvgMin = (int) round($todayAvgSec / 60);
 
             $totalMinutesAll += ($d['total_seconds'] / 60);
             $totalClearedAll += $d['total_cleared'];
+            $totalMeasuredAll += $d['measured_cleared'];
 
-            if ($d['total_cleared'] > 0) {
+            if ($d['measured_cleared'] > 0) {
                 if ($avgMin < $minAvg) {
                     $minAvg = $avgMin;
                     $fastestDept = ['name' => $name, 'avg_minutes' => $avgMin, 'avg_formatted' => self::formatDuration($avgSec)];
@@ -341,6 +432,9 @@ class BillingController extends Controller
                             'room_ward' => $p['room_ward'],
                             'waiting_formatted' => $st['waiting_formatted'],
                             'waiting_minutes' => $st['waiting_minutes'],
+                            'wall_waiting_formatted' => $st['wall_waiting_formatted'],
+                            'is_department_open' => $st['is_department_open'],
+                            'next_open_label' => $st['next_open_label'],
                             'routed_at' => $p['routed_at'],
                         ];
                     }
@@ -354,9 +448,17 @@ class BillingController extends Controller
                 $speed = 'Moderate';
             }
 
+            $schedule = $deptSchedules[$name] ?? $operatingHours->getStatusAt($name, $now);
+
             $costCenterStats[$name] = [
                 'name' => $name,
+                'is_24_7' => $schedule['is_24_7'],
+                'is_open_now' => $schedule['is_open_now'],
+                'hours_label' => $schedule['hours_label'],
+                'next_open_label' => $schedule['next_open_label'],
                 'total_cleared' => $d['total_cleared'],
+                'measured_cleared' => $d['measured_cleared'],
+                'off_hours_cleared_count' => $d['off_hours_cleared_count'],
                 'avg_minutes' => $avgMin,
                 'avg_seconds' => $avgSec,
                 'avg_formatted' => self::formatDuration($avgSec),
@@ -372,7 +474,7 @@ class BillingController extends Controller
             ];
         }
 
-        $overallHospitalAvg = $totalClearedAll > 0 ? (int) round($totalMinutesAll / $totalClearedAll) : 0;
+        $overallHospitalAvg = $totalMeasuredAll > 0 ? (int) round($totalMinutesAll / $totalMeasuredAll) : 0;
 
         $hospitalStats = [
             'total_routing' => count($formattedRouted),
@@ -493,13 +595,17 @@ class BillingController extends Controller
         $disposition = trim((string) $request->query('disposition', 'all'));
         $ward = trim((string) $request->query('ward', 'all'));
         $status = trim((string) $request->query('status', 'all_routed'));
+        $category = strtolower(trim((string) $request->query('category', 'all')));
+        if (!in_array($category, ['all', 'oecb', 'non_oecb', 'for_procedure'], true)) {
+            $category = 'all';
+        }
         $search = trim((string) $request->query('search', ''));
         $startsWith = strtoupper(trim((string) $request->query('starts_with', '')));
         if (!preg_match('/^[A-Z]$/', $startsWith)) {
             $startsWith = '';
         }
         $layout = trim((string) $request->query('layout', 'alphabetical'));
-        if (!in_array($layout, ['alphabetical', 'by_disposition'], true)) {
+        if (!in_array($layout, ['alphabetical', 'by_disposition', 'by_category'], true)) {
             $layout = 'alphabetical';
         }
         $sortDir = strtolower(trim((string) $request->query('sort_dir', 'asc'))) === 'desc' ? 'desc' : 'asc';
@@ -533,12 +639,23 @@ class BillingController extends Controller
             $query->whereRaw('LOWER(TRIM(room_ward)) = ?', [strtolower($ward)]);
         }
 
+        if ($category === 'oecb') {
+            $query->where('is_oecb', true);
+        } elseif ($category === 'for_procedure') {
+            $query->where('is_oecb', false)->where('is_for_procedure', true);
+        } elseif ($category === 'non_oecb') {
+            $query->where('is_oecb', false)->where(function ($q) {
+                $q->where('is_for_procedure', false)->orWhereNull('is_for_procedure');
+            });
+        }
+
         if ($search !== '') {
             $query->where(function ($q) use ($search) {
                 $q->where('patient_name', 'like', "%{$search}%")
                   ->orWhere('hospital_number', 'like', "%{$search}%")
                   ->orWhere('enccode', 'like', "%{$search}%")
-                  ->orWhere('encoded_by', 'like', "%{$search}%");
+                  ->orWhere('encoded_by', 'like', "%{$search}%")
+                  ->orWhere('procedure_type', 'like', "%{$search}%");
             });
         }
 
@@ -548,6 +665,8 @@ class BillingController extends Controller
 
         if ($layout === 'by_disposition') {
             $query->orderByRaw("COALESCE(NULLIF(TRIM(disposition), ''), 'Unspecified') ASC");
+        } elseif ($layout === 'by_category') {
+            $query->orderByRaw("CASE WHEN is_oecb = 1 THEN 1 WHEN is_for_procedure = 1 THEN 3 ELSE 2 END ASC");
         }
         $query->orderByRaw('LOWER(TRIM(patient_name)) ' . ($sortDir === 'desc' ? 'DESC' : 'ASC'));
         $query->orderBy('created_at', 'desc');
@@ -555,10 +674,29 @@ class BillingController extends Controller
         $rows = $query->get();
 
         $dispositionCounts = [];
-        $records = $rows->map(function ($tx) use (&$dispositionCounts) {
+        $categoryCounts = [
+            'oecb' => 0,
+            'non_oecb' => 0,
+            'for_procedure' => 0,
+        ];
+        $records = $rows->map(function ($tx) use (&$dispositionCounts, &$categoryCounts) {
             $disp = trim((string) ($tx->disposition ?? ''));
             $dispLabel = $disp !== '' ? $disp : 'Unspecified';
             $dispositionCounts[$dispLabel] = ($dispositionCounts[$dispLabel] ?? 0) + 1;
+
+            $isOecb = (bool) $tx->is_oecb;
+            $isForProcedure = !$isOecb && (bool) $tx->is_for_procedure;
+            if ($isOecb) {
+                $categoryKey = 'oecb';
+                $categoryLabel = 'OECB';
+            } elseif ($isForProcedure) {
+                $categoryKey = 'for_procedure';
+                $categoryLabel = 'For Procedure';
+            } else {
+                $categoryKey = 'non_oecb';
+                $categoryLabel = 'Non-OECB';
+            }
+            $categoryCounts[$categoryKey]++;
 
             return [
                 'id' => $tx->id,
@@ -568,7 +706,11 @@ class BillingController extends Controller
                 'room_ward' => $tx->room_ward ?: 'Unspecified',
                 'disposition' => $dispLabel,
                 'overall_status' => $tx->overall_status,
-                'is_oecb' => (bool) $tx->is_oecb,
+                'is_oecb' => $isOecb,
+                'is_for_procedure' => $isForProcedure,
+                'procedure_type' => $tx->procedure_type ? trim((string) $tx->procedure_type) : null,
+                'classification_key' => $categoryKey,
+                'classification' => $categoryLabel,
                 'has_oxygen' => (bool) $tx->has_oxygen,
                 'encoded_by' => $tx->encoded_by ?: '—',
                 'arrival_datetime' => $tx->arrival_datetime
@@ -592,6 +734,22 @@ class BillingController extends Controller
             ];
         }
 
+        $categoryLabels = [
+            'oecb' => 'OECB',
+            'non_oecb' => 'Non-OECB',
+            'for_procedure' => 'For Procedure',
+        ];
+        $categorySummary = [];
+        foreach ($categoryLabels as $key => $label) {
+            $cnt = $categoryCounts[$key];
+            $categorySummary[] = [
+                'key' => $key,
+                'label' => $label,
+                'count' => $cnt,
+                'percentage' => $total > 0 ? round(($cnt / $total) * 100, 1) : 0,
+            ];
+        }
+
         $availableDispositions = ClearanceTransaction::query()
             ->selectRaw("DISTINCT COALESCE(NULLIF(TRIM(disposition), ''), 'Unspecified') as disp")
             ->orderBy('disp')
@@ -610,6 +768,7 @@ class BillingController extends Controller
             'records' => $records,
             'total' => $total,
             'dispositionSummary' => $dispositionSummary,
+            'categorySummary' => $categorySummary,
             'availableDispositions' => $availableDispositions,
             'availableWards' => $availableWards,
             'filters' => [
@@ -618,6 +777,7 @@ class BillingController extends Controller
                 'disposition' => $disposition !== '' ? $disposition : 'all',
                 'ward' => $ward !== '' ? $ward : 'all',
                 'status' => $status !== '' ? $status : 'all_routed',
+                'category' => $category,
                 'search' => $search,
                 'starts_with' => $startsWith,
                 'layout' => $layout,
@@ -668,9 +828,12 @@ class BillingController extends Controller
                 'Hospital Number',
                 'Encounter Code',
                 'Originating Ward',
+                'Classification',
+                'OECB',
+                'For Procedure',
+                'Procedure Type',
                 'Type of Disposition',
                 'Routing Status',
-                'OECB',
                 'Oxygen',
                 'Routed Date & Time',
                 'Encoded By',
@@ -683,9 +846,12 @@ class BillingController extends Controller
                     $row['hospital_number'],
                     $row['enccode'],
                     $row['room_ward'],
+                    $row['classification'],
+                    $row['is_oecb'] ? 'Yes' : 'No',
+                    $row['is_for_procedure'] ? 'Yes' : 'No',
+                    $row['procedure_type'] ?: '',
                     $row['disposition'],
                     $row['overall_status'],
-                    $row['is_oecb'] ? 'Yes' : 'No',
                     $row['has_oxygen'] ? 'Yes' : 'No',
                     $row['created_at_formatted'],
                     $row['encoded_by'],
@@ -711,11 +877,16 @@ class BillingController extends Controller
             ->with(['transaction', 'user:id,name'])
             ->get();
 
+        $operatingHours = new DepartmentOperatingHours();
+        $now = now();
+
         $stats = [];
         foreach (self::$costCenters as $cc) {
             $stats[$cc] = [
                 'name' => $cc,
                 'count' => 0,
+                'measured_count' => 0,
+                'off_hours_cleared_count' => 0,
                 'total_seconds' => 0,
                 'min_seconds' => null,
                 'max_seconds' => 0,
@@ -727,26 +898,40 @@ class BillingController extends Controller
             $canonical = self::resolveCanonicalCostCenter($log->department);
             if (!$canonical || !isset($stats[$canonical])) continue;
 
-            $sec = max(0, $log->transaction->created_at->diffInSeconds($log->created_at));
-            $stats[$canonical]['count']++;
-            $stats[$canonical]['total_seconds'] += $sec;
+            $metrics = $operatingHours->calculateMetrics($canonical, $log->transaction->created_at, $log->created_at);
+            $sec = $metrics['effective_seconds'];
+            $isOffHoursZero = $metrics['off_hours_cleared'] && $sec === 0;
 
-            if ($stats[$canonical]['min_seconds'] === null || $sec < $stats[$canonical]['min_seconds']) {
-                $stats[$canonical]['min_seconds'] = $sec;
-            }
-            if ($sec > $stats[$canonical]['max_seconds']) {
-                $stats[$canonical]['max_seconds'] = $sec;
+            $stats[$canonical]['count']++;
+            if ($isOffHoursZero) {
+                $stats[$canonical]['off_hours_cleared_count']++;
+            } else {
+                $stats[$canonical]['measured_count']++;
+                $stats[$canonical]['total_seconds'] += $sec;
+
+                if ($stats[$canonical]['min_seconds'] === null || $sec < $stats[$canonical]['min_seconds']) {
+                    $stats[$canonical]['min_seconds'] = $sec;
+                }
+                if ($sec > $stats[$canonical]['max_seconds']) {
+                    $stats[$canonical]['max_seconds'] = $sec;
+                }
             }
         }
 
         $response = [];
         foreach ($stats as $name => $d) {
-            $avgSec = $d['count'] > 0 ? (int) round($d['total_seconds'] / $d['count']) : 0;
+            $avgSec = $d['measured_count'] > 0 ? (int) round($d['total_seconds'] / $d['measured_count']) : 0;
             $avgMin = (int) round($avgSec / 60);
+            $schedule = $operatingHours->getStatusAt($name, $now);
 
             $response[$name] = [
                 'name' => $name,
+                'is_24_7' => $schedule['is_24_7'],
+                'is_open_now' => $schedule['is_open_now'],
+                'hours_label' => $schedule['hours_label'],
                 'total_cleared' => $d['count'],
+                'measured_cleared' => $d['measured_count'],
+                'off_hours_cleared_count' => $d['off_hours_cleared_count'],
                 'avg_minutes' => $avgMin,
                 'avg_formatted' => self::formatDuration($avgSec),
                 'min_formatted' => $d['min_seconds'] !== null ? self::formatDuration($d['min_seconds']) : '0m',

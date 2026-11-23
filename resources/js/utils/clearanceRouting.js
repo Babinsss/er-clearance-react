@@ -54,17 +54,24 @@ export function getRequiredDepartments(wardStr, requiresOr = false, requiresNicu
     return depts;
 }
 
-export function isDepartmentCleared(clearedDepartments = [], targetDept = '') {
+export function departmentsMatch(targetDept = '', candidateDept = '') {
     const cleanTarget = (targetDept || '').toUpperCase().trim();
-    return (clearedDepartments || []).some((d) => {
-        const cleanD = (d || '').toUpperCase().trim();
-        if (cleanD === cleanTarget) return true;
-        if (cleanTarget === 'CREDIT AND COLLECTION' && (cleanD.includes('CREDIT') || cleanD.includes('COLLECT'))) return true;
-        if (cleanTarget === 'OR' && (cleanD === 'OR/LR/DR' || cleanD === 'OPERATING ROOM')) return true;
-        if (cleanTarget === 'LR/DR' && (cleanD === 'OR/LR/DR' || cleanD === 'LR / DR' || cleanD === 'LR' || cleanD === 'DR' || cleanD === 'DELIVERY ROOM')) return true;
-        if (cleanTarget === 'HDU' && (cleanD === 'HDU' || cleanD === 'CKD' || cleanD === 'DIALYSIS' || cleanD === 'DIALYSIS UNIT' || cleanD === 'HEMODIALYSIS')) return true;
-        if (cleanTarget === 'CARDIO PULMO' && (cleanD.includes('CARDIO') || cleanD.includes('ECG'))) return true;
-        if (cleanTarget === 'NICU' && (cleanD === 'NICU' || cleanD === 'NICU WARD' || cleanD.includes('NEONATAL'))) return true;
-        return false;
-    });
+    const cleanD = (candidateDept || '').toUpperCase().trim();
+    if (!cleanTarget || !cleanD) return false;
+    if (cleanD === cleanTarget) return true;
+    if (cleanTarget === 'CREDIT AND COLLECTION' && (cleanD.includes('CREDIT') || cleanD.includes('COLLECT'))) return true;
+    if (cleanTarget === 'OR' && (cleanD === 'OR/LR/DR' || cleanD === 'OPERATING ROOM')) return true;
+    if (cleanTarget === 'LR/DR' && (cleanD === 'OR/LR/DR' || cleanD === 'LR / DR' || cleanD === 'LR' || cleanD === 'DR' || cleanD === 'DELIVERY ROOM')) return true;
+    if (cleanTarget === 'HDU' && (cleanD === 'HDU' || cleanD === 'CKD' || cleanD === 'DIALYSIS' || cleanD === 'DIALYSIS UNIT' || cleanD === 'HEMODIALYSIS')) return true;
+    if (cleanTarget === 'CARDIO PULMO' && (cleanD.includes('CARDIO') || cleanD.includes('ECG'))) return true;
+    if (cleanTarget === 'NICU' && (cleanD === 'NICU' || cleanD === 'NICU WARD' || cleanD.includes('NEONATAL'))) return true;
+    return false;
+}
+
+export function isDepartmentCleared(clearedDepartments = [], targetDept = '') {
+    return (clearedDepartments || []).some((d) => departmentsMatch(targetDept, d));
+}
+
+export function findDepartmentRemark(pendingRemarks = [], targetDept = '') {
+    return (pendingRemarks || []).find((r) => departmentsMatch(targetDept, r?.department)) || null;
 }

@@ -843,6 +843,7 @@ export default function Billing({
                                                 const pendingStations = stations.filter((st) => st.status !== 'Cleared');
                                                 const flags = [
                                                     patient.is_oecb ? 'OECB' : null,
+                                                    !patient.is_oecb && patient.is_for_procedure ? 'Procedure' : null,
                                                     patient.has_oxygen ? 'O2' : null,
                                                 ].filter(Boolean);
 
@@ -851,8 +852,13 @@ export default function Billing({
                                                         <div className="grid grid-cols-12 gap-3 px-6 py-4 items-center hover:bg-slate-50/80 transition-colors">
                                                             {/* Primary Scan Column: Patient, Identifier & Ward */}
                                                             <div className="col-span-4 min-w-0">
-                                                                <div className="font-extrabold text-sm text-slate-900 leading-snug truncate">
-                                                                    {patient.patient_name}
+                                                                <div className="font-extrabold text-sm text-slate-900 leading-snug flex flex-wrap items-center gap-1.5">
+                                                                    <span className="truncate">{patient.patient_name}</span>
+                                                                    {Number(patient.reroute_count) > 0 && (
+                                                                        <span className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                                                                            Re-routed{Number(patient.reroute_count) > 1 ? ` ×${patient.reroute_count}` : ''}
+                                                                        </span>
+                                                                    )}
                                                                 </div>
                                                                 <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-1 text-xs text-slate-600">
                                                                     <span className="font-mono font-semibold text-slate-700">
@@ -872,6 +878,16 @@ export default function Billing({
                                                                 {patient.encoded_by && (
                                                                     <div className="text-[11px] text-slate-500 mt-0.5">
                                                                         Routed by {patient.encoded_by}
+                                                                    </div>
+                                                                )}
+                                                                {patient.diagnosis && (
+                                                                    <div className="text-[11px] text-slate-600 mt-0.5 truncate" title={patient.diagnosis}>
+                                                                        <span className="font-semibold text-slate-500">Dx:</span> {patient.diagnosis}
+                                                                    </div>
+                                                                )}
+                                                                {!patient.is_oecb && patient.is_for_procedure && patient.procedure_type && (
+                                                                    <div className="text-[11px] text-indigo-800 mt-0.5 truncate" title={patient.procedure_type}>
+                                                                        <span className="font-semibold">Procedure:</span> {patient.procedure_type}
                                                                     </div>
                                                                 )}
                                                             </div>
@@ -966,6 +982,21 @@ export default function Billing({
                                                                         const isCleared = st.status === 'Cleared';
                                                                         const isFocused = selectedCostCenter === st.department;
 
+                                                                        const isClosedSchedule = !isCleared && st.is_24_7 === false && st.is_department_open === false;
+                                                                        const badgeText = isCleared
+                                                                            ? (st.off_hours_cleared && st.duration_seconds === 0
+                                                                                ? `Off-hours (${st.wall_duration_formatted})`
+                                                                                : st.duration_formatted)
+                                                                            : (isClosedSchedule
+                                                                                ? (st.next_open_label || 'Closed')
+                                                                                : `wait ${st.waiting_formatted}`);
+                                                                        const badgeTitle = isCleared
+                                                                            ? (st.wall_duration_formatted && st.wall_duration_formatted !== st.duration_formatted
+                                                                                ? `Active time: ${st.duration_formatted} • Total wait: ${st.wall_duration_formatted}`
+                                                                                : undefined)
+                                                                            : (isClosedSchedule
+                                                                                ? `Office hours: ${st.hours_label} • Total elapsed: ${st.wall_waiting_formatted}`
+                                                                                : undefined);
                                                                         return (
                                                                             <div
                                                                                 key={idx}
@@ -974,23 +1005,32 @@ export default function Billing({
                                                                                 } ${
                                                                                     isCleared
                                                                                         ? 'bg-white border-emerald-200 text-slate-800'
-                                                                                        : 'bg-amber-50/70 border-amber-200 text-amber-900'
+                                                                                        : (isClosedSchedule
+                                                                                            ? 'bg-slate-50 border-slate-200 text-slate-700'
+                                                                                            : 'bg-amber-50/70 border-amber-200 text-amber-900')
                                                                                 }`}
                                                                             >
                                                                                 <div className="min-w-0 pr-2">
                                                                                     <div className="font-bold truncate">{st.department}</div>
-                                                                                    <div className="text-[11px] text-slate-500 truncate">
+                                                                                    <div className="text-[11px] text-slate-500 truncate" title={st.pending_remark?.remarks || undefined}>
                                                                                         {isCleared
                                                                                             ? `Cleared by ${st.cleared_by || 'Staff'}`
-                                                                                            : 'Pending clearance'}
+                                                                                            : (st.pending_remark?.remarks
+                                                                                                ? `Note: ${st.pending_remark.remarks}`
+                                                                                                : (isClosedSchedule ? `SLA paused (${st.hours_label})` : 'Pending clearance'))}
                                                                                     </div>
                                                                                 </div>
-                                                                                <span className={`shrink-0 font-mono font-bold text-[11px] px-2 py-0.5 rounded ${
-                                                                                    isCleared
-                                                                                        ? 'bg-emerald-100 text-emerald-800'
-                                                                                        : 'bg-amber-100 text-amber-900'
-                                                                                }`}>
-                                                                                    {isCleared ? st.duration_formatted : `wait ${st.waiting_formatted}`}
+                                                                                <span
+                                                                                    title={badgeTitle}
+                                                                                    className={`shrink-0 font-mono font-bold text-[11px] px-2 py-0.5 rounded ${
+                                                                                        isCleared
+                                                                                            ? 'bg-emerald-100 text-emerald-800'
+                                                                                            : (isClosedSchedule
+                                                                                                ? 'bg-slate-200 text-slate-700'
+                                                                                                : 'bg-amber-100 text-amber-900')
+                                                                                    }`}
+                                                                                >
+                                                                                    {badgeText}
                                                                                 </span>
                                                                             </div>
                                                                         );
@@ -1042,11 +1082,20 @@ export default function Billing({
                                                 return (
                                                     <div key={cc.name} className="space-y-1">
                                                         <div className="flex justify-between items-center text-xs">
-                                                            <div className="flex items-center space-x-2">
+                                                            <div className="flex flex-wrap items-center gap-2">
                                                                 <span className="font-extrabold text-slate-700">{cc.name}</span>
                                                                 <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded border ${badgeColor}`}>
                                                                     {cc.speed_rating}
                                                                 </span>
+                                                                {cc.is_24_7 === false && (
+                                                                    <span className={`text-[11px] font-semibold px-1.5 py-0.5 rounded border ${
+                                                                        cc.is_open_now
+                                                                            ? 'bg-sky-50 text-sky-800 border-sky-200'
+                                                                            : 'bg-slate-100 text-slate-600 border-slate-200'
+                                                                    }`}>
+                                                                        {cc.hours_label}{!cc.is_open_now ? ' • Closed' : ''}
+                                                                    </span>
+                                                                )}
                                                                 {cc.pending_count > 0 && (
                                                                     <span className="bg-rose-100 text-rose-700 text-[11px] font-bold px-1.5 py-0.5 rounded font-mono">
                                                                         {cc.pending_count} currently waiting
@@ -1100,10 +1149,20 @@ export default function Billing({
                                                             className="hover:bg-slate-50/80 cursor-pointer transition-colors"
                                                         >
                                                             <td className="p-3 pl-6 font-extrabold text-slate-800 text-sm">
-                                                                {cc.name}
+                                                                <div>{cc.name}</div>
+                                                                {cc.is_24_7 === false && (
+                                                                    <div className="text-[11px] font-semibold text-slate-500 mt-0.5">
+                                                                        {cc.hours_label}{!cc.is_open_now ? ` • ${cc.next_open_label || 'Closed'}` : ''}
+                                                                    </div>
+                                                                )}
                                                             </td>
                                                             <td className="p-3 font-extrabold text-slate-900">
-                                                                {cc.avg_formatted}
+                                                                <div>{cc.avg_formatted}</div>
+                                                                {cc.off_hours_cleared_count > 0 && (
+                                                                    <div className="text-[10px] font-medium text-slate-400">
+                                                                        +{cc.off_hours_cleared_count} off-hours
+                                                                    </div>
+                                                                )}
                                                             </td>
                                                             <td className="p-3">
                                                                 <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold ${
@@ -1517,6 +1576,28 @@ export default function Billing({
                                         </>
                                     )}
                                 </div>
+                                {inspectPatient.diagnosis && (
+                                    <div className="mt-2 text-xs text-slate-700 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5">
+                                        <span className="font-bold text-slate-500 uppercase tracking-wide mr-1.5">Diagnosis:</span>
+                                        <span className="font-semibold text-slate-800">{inspectPatient.diagnosis}</span>
+                                    </div>
+                                )}
+                                {!inspectPatient.is_oecb && inspectPatient.is_for_procedure && (
+                                    <div className="mt-2 text-xs text-indigo-950 bg-indigo-50 border border-indigo-200 rounded-lg px-2.5 py-1.5">
+                                        <span className="font-bold uppercase tracking-wide mr-1.5">Non-OECB Procedure:</span>
+                                        <span className="font-semibold">{inspectPatient.procedure_type || 'Unspecified'}</span>
+                                    </div>
+                                )}
+                                {Number(inspectPatient.reroute_count) > 0 && (
+                                    <div className="mt-2 text-xs text-amber-950 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                                        <span className="font-bold uppercase tracking-wide mr-1.5">
+                                            Re-routed{Number(inspectPatient.reroute_count) > 1 ? ` (×${inspectPatient.reroute_count})` : ''}:
+                                        </span>
+                                        <span className="font-semibold">
+                                            {inspectPatient.reroute_reason || 'Returned for re-verification'}
+                                        </span>
+                                    </div>
+                                )}
                             </div>
                             <button
                                 type="button"
@@ -1578,7 +1659,12 @@ export default function Billing({
                                                 return (
                                                     <tr key={i} className="hover:bg-slate-50/70 transition-colors">
                                                         <td className="p-3 pl-4 font-bold text-slate-800">
-                                                            {st.department}
+                                                            <div>{st.department}</div>
+                                                            {!isCleared && st.pending_remark?.remarks && (
+                                                                <div className="text-[11px] font-medium text-amber-900 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-1">
+                                                                    {st.pending_remark.remarks}
+                                                                </div>
+                                                            )}
                                                         </td>
                                                         <td className="p-3">
                                                             <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold ${
@@ -1591,9 +1677,27 @@ export default function Billing({
                                                         </td>
                                                         <td className="p-3">
                                                             {isCleared ? (
-                                                                <span className="font-extrabold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 font-mono text-[11px]">
-                                                                    Cleared in {st.duration_formatted}
-                                                                </span>
+                                                                <div>
+                                                                    <span className="font-extrabold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 font-mono text-[11px]">
+                                                                        {st.off_hours_cleared && st.duration_seconds === 0
+                                                                            ? 'Cleared Off-Hours'
+                                                                            : `Cleared in ${st.duration_formatted}`}
+                                                                    </span>
+                                                                    {st.wall_duration_formatted && st.wall_duration_formatted !== st.duration_formatted && (
+                                                                        <div className="text-[11px] text-slate-500 mt-1 font-mono">
+                                                                            Total wait: {st.wall_duration_formatted}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            ) : st.is_24_7 === false && st.is_department_open === false ? (
+                                                                <div>
+                                                                    <span className="font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 font-mono text-[11px]">
+                                                                        {st.next_open_label || 'Closed'} • SLA paused
+                                                                    </span>
+                                                                    <div className="text-[11px] text-slate-500 mt-1 font-mono">
+                                                                        Elapsed: {st.wall_waiting_formatted} ({st.hours_label})
+                                                                    </div>
+                                                                </div>
                                                             ) : (
                                                                 <span className="font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 font-mono text-[11px]">
                                                                     Waiting {st.waiting_formatted}
@@ -1654,6 +1758,11 @@ export default function Billing({
                                 </h3>
                                 <p className="text-xs text-slate-500 font-medium mt-0.5">
                                     Detailed clearance speed metrics, active waiting queue, and recent logs.
+                                    {inspectCostCenter.is_24_7 === false && (
+                                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded bg-slate-200/80 text-slate-700 font-semibold text-[11px]">
+                                            Office Hours: {inspectCostCenter.hours_label}{!inspectCostCenter.is_open_now ? ` (${inspectCostCenter.next_open_label || 'Closed'})` : ' (Open)'}
+                                        </span>
+                                    )}
                                 </p>
                             </div>
                             <button
@@ -1721,9 +1830,20 @@ export default function Billing({
                                                         <td className="p-2.5 font-mono text-slate-600">{p.hospital_number}</td>
                                                         <td className="p-2.5 text-slate-600">{p.room_ward}</td>
                                                         <td className="p-2.5 pr-4 text-right">
-                                                            <span className="font-mono font-extrabold text-amber-900 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
-                                                                {p.waiting_formatted}
-                                                            </span>
+                                                            {p.is_department_open === false ? (
+                                                                <div className="inline-flex flex-col items-end">
+                                                                    <span className="font-mono font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                                                                        {p.next_open_label || 'Closed'}
+                                                                    </span>
+                                                                    <span className="text-[10px] font-mono text-slate-500 mt-0.5">
+                                                                        Total: {p.wall_waiting_formatted}
+                                                                    </span>
+                                                                </div>
+                                                            ) : (
+                                                                <span className="font-mono font-extrabold text-amber-900 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
+                                                                    {p.waiting_formatted}
+                                                                </span>
+                                                            )}
                                                         </td>
                                                     </tr>
                                                 ))}
@@ -1761,8 +1881,15 @@ export default function Billing({
                                                         <td className="p-2.5 text-slate-600">{c.room_ward}</td>
                                                         <td className="p-2.5">
                                                             <span className="font-mono font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 text-[11px]">
-                                                                {c.duration_formatted}
+                                                                {c.off_hours_cleared && c.duration_minutes === 0 && c.duration_formatted === '0s'
+                                                                    ? 'Off-hours'
+                                                                    : c.duration_formatted}
                                                             </span>
+                                                            {c.wall_duration_formatted && c.wall_duration_formatted !== c.duration_formatted && (
+                                                                <div className="text-[10px] font-mono text-slate-500 mt-0.5">
+                                                                    Total: {c.wall_duration_formatted}
+                                                                </div>
+                                                            )}
                                                         </td>
                                                         <td className="p-2.5 text-slate-500 font-mono text-[11px]">
                                                             {new Date(c.cleared_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}

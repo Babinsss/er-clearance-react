@@ -219,18 +219,26 @@ export default function PrintF07({ transaction = {}, logs = [] }) {
                         {/* --- OECB STAMP OVERLAY (EMERGENCY ROOM ONLY) --- */}
                         {isErTransaction && (
                             <div 
-                                className="absolute z-10 font-black text-lg uppercase tracking-widest px-3 py-0.5 transform -rotate-6 rounded-sm shadow-sm"
-                                style={{ 
-                                    top: '58px', 
-                                    right: '8%', 
-                                    border: `3px solid ${stampColor}`, 
-                                    color: stampColor,
-                                    backgroundColor: 'rgba(255, 255, 255, 0.85)',
-                                    WebkitPrintColorAdjust: 'exact',
-                                    printColorAdjust: 'exact'
-                                }}
+                                className="absolute z-10 text-right"
+                                style={{ top: '54px', right: '8%' }}
                             >
-                                {stampText}
+                                <div
+                                    className="font-black text-lg uppercase tracking-widest px-3 py-0.5 transform -rotate-6 rounded-sm shadow-sm inline-block"
+                                    style={{ 
+                                        border: `3px solid ${stampColor}`, 
+                                        color: stampColor,
+                                        backgroundColor: 'rgba(255, 255, 255, 0.85)',
+                                        WebkitPrintColorAdjust: 'exact',
+                                        printColorAdjust: 'exact'
+                                    }}
+                                >
+                                    {stampText}
+                                </div>
+                                {!isOecb && Boolean(transaction?.is_for_procedure) && (
+                                    <div className="mt-1 text-[10px] font-bold uppercase tracking-wide text-slate-800 bg-white/90 px-1.5 py-0.5 border border-slate-400 rounded-sm">
+                                        Procedure: {transaction?.procedure_type || 'Yes'}
+                                    </div>
+                                )}
                             </div>
                         )}
 

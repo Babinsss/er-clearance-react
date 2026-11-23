@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\User;
 use App\Models\Department;
 use App\Models\ClearanceLog;
+use App\Services\DepartmentOperatingHours;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
@@ -74,6 +75,7 @@ class AdminController extends Controller
             ->with('transaction') 
             ->get();
 
+        $operatingHours = new DepartmentOperatingHours();
         $departmentStats = [];
 
         foreach ($logs as $log) {
@@ -81,10 +83,15 @@ class AdminController extends Controller
 
             $wardTime = $log->transaction->created_at;
             $clearTime = $log->created_at;
-            
-            // Calculate turnaround time in minutes
-            $minutes = $wardTime->diffInMinutes($clearTime);
             $dept = $log->department;
+
+            $metrics = $operatingHours->calculateMetrics($dept, $wardTime, $clearTime);
+            if ($metrics['off_hours_cleared'] && $metrics['effective_seconds'] === 0) {
+                continue;
+            }
+
+            // Calculate effective turnaround time in minutes
+            $minutes = (int) round($metrics['effective_seconds'] / 60);
 
             if (!isset($departmentStats[$dept])) {
                 $departmentStats[$dept] = ['total_minutes' => 0, 'count' => 0];
